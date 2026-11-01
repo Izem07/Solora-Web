@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - main # Triggers workflow on pushes to the main branch
+  workflow_dispatch: # Allows manual trigger from the GitHub Actions tab
 
 # Sets permissions of the GITHUB_TOKEN to allow deployment to GitHub Pages
 permissions:
@@ -27,7 +28,9 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Setup GitHub Pages
-        uses: actions/configure-pages@v4
+        uses: actions/configure-pages@v5
+        with:
+          enablement: true
 
       - name: Upload static artifact (public directory)
         uses: actions/upload-pages-artifact@v3

@@ -124,7 +124,13 @@ if (navidromeDirInput) {
 
 function getBaseUrl() {
   const custom = (serverInput?.value || '').trim() || localStorage.getItem('solora_server_url') || '';
-  return custom.replace(/\/+$/, '');
+  if (custom) return custom.replace(/\/+$/, '');
+
+  // If hosted on GitHub Pages or remote host and no backend configured, warn user
+  if (window.location.hostname.endsWith('github.io')) {
+    return null;
+  }
+  return '';
 }
 
 // ─────────────────────────────────────────────────
@@ -181,6 +187,14 @@ inspectBtn.addEventListener('click', async () => {
   if (!url) return;
 
   const base = getBaseUrl();
+  if (base === null) {
+    trackList.innerHTML = `<div class="placeholder" style="color:#ef4444">⚠️ You are on GitHub Pages! Please enter your running Solora backend address (e.g. <code>http://localhost:3000</code> or your server IP) in the "Solora Backend Server" field above.</div>`;
+    inspectBtn.disabled = false;
+    inspectBtn.textContent = 'Inspect';
+    serverInput?.focus();
+    return;
+  }
+
   inspectBtn.disabled = true;
   inspectBtn.textContent = 'Inspecting...';
   collectionHeader.classList.add('hidden');

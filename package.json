@@ -1,0 +1,18 @@
+{
+  "name": "solora-web",
+  "version": "1.0.0",
+  "description": "Local self-hosted Spotify downloader & Navidrome sync with Hylo theme",
+  "main": "main.js",
+  "type": "module",
+  "scripts": {
+    "start": "node main.js",
+    "dev": "node --watch main.js"
+  },
+  "dependencies": {
+    "archiver": "^7.0.1",
+    "cors": "^2.8.5",
+    "dotenv": "^16.4.5",
+    "express": "^4.19.2",
+    "node-id3": "^0.2.9"
+  }
+}

@@ -1,0 +1,121 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Solora | Music Inspector & Downloader</title>
+  <link rel="icon" type="image/jpeg" href="solora-icon.jpg">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <div class="app-container">
+    <header class="header">
+      <div class="logo">
+        <img src="solora-icon.jpg" alt="Solora Logo" class="logo-img">
+        <h1>SOLORA</h1>
+      </div>
+      <p class="subtitle">Search, Inspect &bull; Direct Browser Downloads &bull; Navidrome Sync</p>
+    </header>
+
+    <main>
+      <!-- Optional Remote Backend & Navidrome Destination Config -->
+      <div class="server-config">
+        <input 
+          type="text" 
+          id="serverUrl" 
+          placeholder="Solora Backend Server (Leave empty if running locally)" 
+        />
+        <input 
+          type="text" 
+          id="navidromeDirInput" 
+          placeholder="Navidrome Music Directory (e.g. D:\Music or /music)" 
+          style="margin-top: 6px;"
+        />
+      </div>
+
+      <section class="search-box">
+        <input 
+          type="text" 
+          id="urlInput" 
+          placeholder="Paste Spotify Track, Album, or Playlist URL..." 
+          autocomplete="off"
+        />
+        <button id="inspectBtn">Inspect</button>
+      </section>
+
+      <!-- Add individual track row (revealed after first inspect) -->
+      <div id="addTrackRow" class="add-track-row hidden">
+        <input
+          type="text"
+          id="addTrackInput"
+          placeholder="Paste a Spotify track URL to add to list..."
+          autocomplete="off"
+        />
+        <button id="addTrackBtn" class="btn-add-track">+ Add</button>
+      </div>
+
+      <!-- Collection Header (when album or playlist inspected) -->
+      <section id="collectionHeader" class="collection-header hidden"></section>
+
+      <!-- Selection & Batch Toolbar (Appears above tracks once loaded) -->
+      <section id="selectionToolbar" class="selection-toolbar hidden">
+        <div class="select-all-box">
+          <input type="checkbox" id="selectAllCheckbox" class="custom-checkbox">
+          <label for="selectAllCheckbox" id="selectAllLabel">Select All</label>
+        </div>
+        <span id="selectedCountBadge" class="selected-count">0 selected</span>
+      </section>
+
+      <!-- Progress Bar Container (Hidden by default) -->
+      <section id="progressSection" class="progress-section hidden">
+        <div class="progress-info">
+          <span id="progressStatusText">Processing tracks...</span>
+          <button id="cancelBtn" class="btn-cancel" type="button">Cancel</button>
+        </div>
+        <div class="progress-bar-track">
+          <div id="progressBarFill" class="progress-bar-fill"></div>
+        </div>
+      </section>
+
+      <!-- Track Stage Area -->
+      <section class="track-stage">
+        <div id="trackList" class="track-grid">
+          <div class="placeholder">Paste a Spotify link and click Inspect to view tracks.</div>
+        </div>
+      </section>
+
+      <!-- Collapsible Terminal Console (Hidden by default) -->
+      <section class="terminal-drawer">
+        <button id="toggleTerminalBtn" class="terminal-toggle" type="button">
+          <span class="toggle-icon">▸</span> Activity Log
+        </button>
+        <div id="terminalBody" class="terminal-body hidden">
+          <pre id="terminalLogs">Ready. Waiting for user action...</pre>
+        </div>
+      </section>
+    </main>
+
+    <!-- Floating Batch Action Bar (Slides up when 1+ tracks selected) -->
+    <div id="floatingActionBar" class="floating-action-bar hidden">
+      <div class="floating-content">
+        <div class="floating-status">
+          <span class="status-dot"></span>
+          <span id="floatingSelectedText">0 tracks selected</span>
+        </div>
+        <div class="floating-buttons">
+          <button id="downloadSelectedZipBtn" class="btn-yellow">
+            ⚡ Download Selected (.zip)
+          </button>
+          <button id="sendToNavidromeBtn" class="btn-navidrome">
+            🚀 Send to Navidrome
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Toast Notification -->
+    <div id="toastNotification" class="toast hidden"></div>
+  </div>
+  <script src="app.js"></script>
+</body>
+</html>

@@ -2,9 +2,7 @@ name: solora
 
 services:
   solora:
-    build:
-      context: https://github.com/Izem07/Solora-Web.git#main
-    image: solora:latest
+    image: izem07/solora:latest
     container_name: solora
     restart: unless-stopped
 

@@ -45,8 +45,14 @@ app.post('/api/navidrome-test', async (req, res) => {
   const password = pass !== undefined && pass !== null ? pass : NAVIDROME_PASSWORD;
 
   if (!baseUrl) {
-    return res.status(400).json({ success: false, message: 'Navidrome URL is not configured on the server.' });
+    return res.status(400).json({ success: false, message: 'Navidrome URL is not configured. Enter it in Settings (e.g. http://192.168.1.10:4533).' });
   }
+
+  // Catch UNC paths (\\server\share) or plain directory paths being put in the URL field
+  if (!baseUrl.startsWith('http://') && !baseUrl.startsWith('https://')) {
+    return res.status(400).json({ success: false, message: `"${baseUrl}" looks like a file path, not a URL. Navidrome URL should start with http:// (e.g. http://100.68.222.8:4533).` });
+  }
+
   if (!username) {
     return res.status(400).json({ success: false, message: 'Please enter a Navidrome username.' });
   }

@@ -1,4 +1,4 @@
-name: Validate & Notify
+name: Build & Push to Docker Hub
 
 on:
   push:
@@ -7,26 +7,26 @@ on:
   workflow_dispatch:
 
 jobs:
-  validate:
+  build-and-push:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Set up Node.js
-        uses: actions/setup-node@v4
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to Docker Hub
+        uses: docker/login-action@v3
         with:
-          node-version: '20'
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
 
-      - name: Install dependencies
-        run: npm ci
-
-      - name: Syntax check
-        run: node --check main.js && echo "✓ main.js syntax OK"
-
-      - name: Confirm deploy source
-        run: |
-          echo "✓ Push to main detected."
-          echo "CasaOS will build from: https://github.com/Izem07/Solora-Web.git#main"
-          echo "To update your running container, run on CasaOS:"
-          echo "  docker compose down && docker compose up -d --build"
+      - name: Build and push
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          push: true
+          tags: izem07/solora:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max

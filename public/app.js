@@ -17,6 +17,8 @@ const floatingSelectedText = document.getElementById('floatingSelectedText');
 const downloadSelectedZipBtn = document.getElementById('downloadSelectedZipBtn');
 const sendToNavidromeBtn = document.getElementById('sendToNavidromeBtn');
 const toastNotification  = document.getElementById('toastNotification');
+const toastMessage      = document.getElementById('toastMessage');
+const toastClose        = document.getElementById('toastClose');
 const toggleTerminalBtn  = document.getElementById('toggleTerminalBtn');
 const terminalBody       = document.getElementById('terminalBody');
 const terminalLogs       = document.getElementById('terminalLogs');
@@ -74,10 +76,27 @@ function logActivity(msg) {
 
 function showToast(message, duration = 4500) {
   if (!toastNotification) return;
-  toastNotification.textContent = message;
+  if (toastMessage) toastMessage.textContent = message;
   toastNotification.classList.remove('hidden');
   clearTimeout(toastNotification._timer);
-  toastNotification._timer = setTimeout(() => toastNotification.classList.add('hidden'), duration);
+  if (duration > 0) {
+    toastNotification._timer = setTimeout(() => toastNotification.classList.add('hidden'), duration);
+  }
+}
+
+function dismissToast() {
+  if (!toastNotification) return;
+  toastNotification.classList.add('hidden');
+  clearTimeout(toastNotification._timer);
+}
+
+function notifyFallback(title) {
+  showToast(`🔄 Switched to spotdl for "${title}" (yt-dlp failed)`, 0);
+  logActivity(`[Fallback] yt-dlp failed → spotdl used for: ${title}`);
+}
+
+if (toastClose) {
+  toastClose.addEventListener('click', dismissToast);
 }
 
 function setProgress(pct, statusText) {
@@ -110,7 +129,7 @@ function markTrackAsDownloaded(trackId) {
     btn.classList.remove('downloading');
     btn.classList.add('downloaded');
     btn.innerHTML = '✓ Downloaded';
-    btn.disabled = false;
+    btn.disabled = false; // always keep clickable — they can re-download
   }
 }
 
@@ -464,10 +483,10 @@ function appendTrackCard(track, base) {
         </div>
         <span class="track-duration">${formatDuration(track.durationMs)}</span>
         <div class="track-btn-row">
-          <button class="btn-send-nav${isSentToNav ? ' sent' : ''}" title="Send to Navidrome" ${isSentToNav ? 'disabled' : ''}>
+          <button class="btn-send-nav${isSentToNav ? ' sent' : ''}" title="${isSentToNav ? 'Sent to Navidrome — click to send again' : 'Send to Navidrome'}">
             ${isSentToNav ? '✓' : '🚀'}
           </button>
-          <button class="btn-download-action${isDownloaded ? ' downloaded' : ''}" ${isDownloaded ? 'disabled' : ''}>
+          <button class="btn-download-action${isDownloaded ? ' downloaded' : ''}">
             ${isDownloaded ? '✓ Downloaded' : 'Download MP3'}
           </button>
         </div>
@@ -480,10 +499,17 @@ function appendTrackCard(track, base) {
   });
   card.querySelector('.btn-download-action').addEventListener('click', e => {
     e.stopPropagation();
-    if (!downloadedTrackIds.has(track.id)) triggerOnDemandDownload(track, card, base);
+    if (downloadedTrackIds.has(track.id)) {
+      if (!confirm(`"${track.title}" was already downloaded. Download again?`)) return;
+    }
+    triggerOnDemandDownload(track, card, base);
   });
   card.querySelector('.btn-send-nav').addEventListener('click', e => {
     e.stopPropagation();
+    const navidromeSentIds = JSON.parse(localStorage.getItem('solora_navidrome_sent') || '[]');
+    if (navidromeSentIds.includes(track.id)) {
+      if (!confirm(`"${track.title}" was already sent to Navidrome. Send again?`)) return;
+    }
     triggerSingleNavidrome(track, card, base);
   });
 
@@ -523,17 +549,17 @@ function renderMetadata(data, base) {
 
   data.tracks.forEach(track => {
     const isDownloaded = downloadedTrackIds.has(track.id);
+    const navidromeSentIds = JSON.parse(localStorage.getItem('solora_navidrome_sent') || '[]');
+    const isSentToNav = navidromeSentIds.includes(track.id);
+
     const card = document.createElement('div');
-    card.className = `track-card${isDownloaded ? ' downloaded' : ''}`;
+    card.className = `track-card${isDownloaded ? ' downloaded' : ''}${isSentToNav ? ' nav-sent' : ''}`;
     card.id = `card-${track.id}`;
 
     const metaParts = [];
     if (track.album) metaParts.push(track.album);
     if (track.year)  metaParts.push(track.year);
     const metaLine = metaParts.join(' · ');
-
-    const navidromeSentIds = JSON.parse(localStorage.getItem('solora_navidrome_sent') || '[]');
-    const isSentToNav = navidromeSentIds.includes(track.id);
 
     card.innerHTML = `
       <div class="track-checkbox-wrap">
@@ -554,10 +580,10 @@ function renderMetadata(data, base) {
           </div>
           <span class="track-duration">${formatDuration(track.durationMs)}</span>
           <div class="track-btn-row">
-            <button class="btn-send-nav${isSentToNav ? ' sent' : ''}" title="Send to Navidrome" ${isSentToNav ? 'disabled' : ''}>
+            <button class="btn-send-nav${isSentToNav ? ' sent' : ''}" title="${isSentToNav ? 'Sent to Navidrome — click to send again' : 'Send to Navidrome'}">
               ${isSentToNav ? '✓' : '🚀'}
             </button>
-            <button class="btn-download-action${isDownloaded ? ' downloaded' : ''}" ${isDownloaded ? 'disabled' : ''}>
+            <button class="btn-download-action${isDownloaded ? ' downloaded' : ''}">
               ${isDownloaded ? '✓ Downloaded' : 'Download MP3'}
             </button>
           </div>
@@ -571,11 +597,18 @@ function renderMetadata(data, base) {
 
     card.querySelector('.btn-download-action').addEventListener('click', e => {
       e.stopPropagation();
-      if (!isDownloaded) triggerOnDemandDownload(track, card, base);
+      if (downloadedTrackIds.has(track.id)) {
+        if (!confirm(`"${track.title}" was already downloaded. Download again?`)) return;
+      }
+      triggerOnDemandDownload(track, card, base);
     });
 
     card.querySelector('.btn-send-nav').addEventListener('click', e => {
       e.stopPropagation();
+      const navidromeSentIds = JSON.parse(localStorage.getItem('solora_navidrome_sent') || '[]');
+      if (navidromeSentIds.includes(track.id)) {
+        if (!confirm(`"${track.title}" was already sent to Navidrome. Send again?`)) return;
+      }
       triggerSingleNavidrome(track, card, base);
     });
 
@@ -690,6 +723,8 @@ downloadSelectedZipBtn.addEventListener('click', () => {
       if (done) return;
       if (msg.type === 'log') {
         logActivity(`[Solora] ${msg.data}`);
+      } else if (msg.type === 'fallback') {
+        notifyFallback(msg.data.title);
       } else if (msg.type === 'status') {
         logActivity(`[Zip] ${msg.data}`);
         progressStatusText.textContent = msg.data;
@@ -800,6 +835,8 @@ sendToNavidromeBtn.addEventListener('click', () => {
       if (done) return;
       if (msg.type === 'log') {
         logActivity(`[Navidrome] ${msg.data}`);
+      } else if (msg.type === 'fallback') {
+        notifyFallback(msg.data.title);
       } else if (msg.type === 'status') {
         logActivity(`[Navidrome] ${msg.data}`);
         progressStatusText.textContent = msg.data;
@@ -814,7 +851,7 @@ sendToNavidromeBtn.addEventListener('click', () => {
         const pct = Math.round((msg.data.completed / msg.data.total) * 90);
         setProgress(pct, `Synced ${msg.data.completed} of ${msg.data.total}...`);
         hideTrackProgress(msg.data.id);
-        if (msg.data.id) markTrackAsDownloaded(msg.data.id);
+        if (msg.data.id) markTrackSentToNav(msg.data.id);
       } else if (msg.type === 'track_fail') {
         const pct = Math.round((msg.data.completed / msg.data.total) * 90);
         setProgress(pct, `${msg.data.completed}/${msg.data.total} — ⚠ Failed: ${msg.data.title}`);
@@ -842,7 +879,7 @@ sendToNavidromeBtn.addEventListener('click', () => {
 });
 
 // ─────────────────────────────────────────────────
-// Mark a track as sent to Navidrome (rocket → green ✓)
+// Mark a track as sent to Navidrome (rocket → blue ✓, stays clickable)
 // ─────────────────────────────────────────────────
 function markTrackSentToNav(trackId) {
   const card = document.getElementById(`card-${trackId}`);
@@ -852,8 +889,8 @@ function markTrackSentToNav(trackId) {
   if (btn) {
     btn.classList.add('sent');
     btn.textContent = '✓';
-    btn.disabled = true;
-    btn.title = 'Sent to Navidrome';
+    btn.disabled = false; // keep clickable — confirm dialog handles repeat sends
+    btn.title = 'Sent to Navidrome — click to send again';
   }
   // Persist across re-renders
   const stored = JSON.parse(localStorage.getItem('solora_navidrome_sent') || '[]');
@@ -880,6 +917,7 @@ function triggerSingleNavidrome(track, card, base) {
   if (navBtn) { navBtn.disabled = true; navBtn.textContent = '⏳'; navBtn.title = 'Sending...'; }
   showTrackProgress(track.id);
   setTrackProgress(track.id, 0);
+  showProgress(`Sending to Navidrome: ${track.title}...`);
   logActivity(`[Navidrome] Sending: ${track.title} - ${track.artist || ''}`);
 
   let done = false;
@@ -888,7 +926,7 @@ function triggerSingleNavidrome(track, card, base) {
   const navPass = navidromePassInput?.value || '';
   const navUrl  = (navidromeUrlInput?.value.trim() || localStorage.getItem('solora_navidrome_url') || '').replace(/\/+$/, '');
 
-  readSSEStream(
+  const cancelStream = readSSEStream(
     fetch(`${base}/api/send-to-navidrome`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -904,35 +942,57 @@ function triggerSingleNavidrome(track, card, base) {
       if (done) return;
       if (msg.type === 'track_progress') {
         setTrackProgress(track.id, msg.data.pct);
+        setProgress(Math.round(msg.data.pct * 0.9), `Sending to Navidrome: ${track.title}...`);
+      } else if (msg.type === 'fallback') {
+        notifyFallback(msg.data.title);
       } else if (msg.type === 'track_start') {
         setTrackProgress(track.id, 0);
+        setProgress(3, `Sending to Navidrome: ${track.title}...`);
       } else if (msg.type === 'track_done') {
         setTrackProgress(track.id, 100);
         hideTrackProgress(track.id);
+        setProgress(95, `Finalizing: ${track.title}...`);
         markTrackSentToNav(track.id);
         showToast(`🚀 "${track.title}" sent to Navidrome!`);
         logActivity(`[Navidrome] ✓ Sent: ${track.title}`);
         done = true;
       } else if (msg.type === 'track_fail') {
         hideTrackProgress(track.id);
+        setProgress(0, `❌ Failed: ${track.title}`);
+        hideProgress(3000);
         showToast(`❌ Failed to send "${track.title}": ${msg.data.error}`);
         logActivity(`[Navidrome Error] ${track.title}: ${msg.data.error}`);
         if (navBtn) { navBtn.disabled = false; navBtn.textContent = '🚀'; navBtn.title = 'Send to Navidrome'; }
         done = true;
       } else if (msg.type === 'done') {
         // scan triggered notification
+        setProgress(100, `✓ Sent to Navidrome!`);
         if (msg.data.scanTriggered) showToast(`🚀 "${track.title}" sent! Library scan started.`);
+        hideProgress(2200);
         done = true;
       }
     },
     (err) => {
       if (done) return;
       hideTrackProgress(track.id);
+      setProgress(0, `❌ ${err.message}`);
+      hideProgress(3000);
       showToast(`❌ Navidrome error: ${err.message}`);
       logActivity(`[Navidrome Error] ${err.message}`);
       if (navBtn) { navBtn.disabled = false; navBtn.textContent = '🚀'; navBtn.title = 'Send to Navidrome'; }
     }
   );
+
+  // Cancel button — aborts the SSE stream
+  cancelBtn.onclick = () => {
+    if (cancelStream) cancelStream();
+    done = true;
+    hideTrackProgress(track.id);
+    hideProgress(0);
+    showToast('⚠️ Navidrome send cancelled.');
+    logActivity(`[Navidrome] Cancelled: ${track.title}`);
+    if (navBtn) { navBtn.disabled = false; navBtn.textContent = '🚀'; navBtn.title = 'Send to Navidrome'; }
+  };
 }
 
 // ─────────────────────────────────────────────────
@@ -953,19 +1013,31 @@ async function triggerOnDemandDownload(track, card, base) {
   logActivity(`[Download] Starting: ${track.title} - ${track.artist || ''}`);
 
   const params = new URLSearchParams({
-    title:    track.title,
-    artist:   track.artist   || '',
-    subtitle: track.subtitle || '',
-    album:    track.album    || '',
-    year:     track.year     || '',
-    coverArt: track.coverArt || ''
+    title:      track.title,
+    artist:     track.artist   || '',
+    subtitle:   track.subtitle || '',
+    album:      track.album    || '',
+    year:       track.year     || '',
+    coverArt:   track.coverArt || '',
+    spotifyUrl: track.spotifyUrl || ''
   });
 
   const downloadUrl = `${base}/api/download-track?${params}`;
   let error = null;
 
+  // Abort controller so the Cancel button can stop this download
+  const abortController = new AbortController();
+  cancelBtn.onclick = () => {
+    abortController.abort();
+  };
+
   try {
-    const response = await fetch(downloadUrl);
+    const response = await fetch(downloadUrl, { signal: abortController.signal });
+
+    // Notify if the server fell back to spotdl
+    if (response.headers.get('X-Solora-Fallback') === 'spotdl') {
+      notifyFallback(track.title);
+    }
 
     if (!response.ok) {
       const txt = await response.text();
@@ -1015,20 +1087,26 @@ async function triggerOnDemandDownload(track, card, base) {
     hideProgress(2000);
   } catch (err) {
     error = err;
-    showToast(`❌ Error: ${err.message}`);
-    logActivity(`[Download Error] ${err.message}`);
-    setProgress(0, `❌ ${err.message}`);
-    hideProgress(3000);
+    if (err.name === 'AbortError') {
+      showToast('⚠️ Download cancelled.');
+      logActivity(`[Download] Cancelled: ${track.title}`);
+      setProgress(0, 'Cancelled');
+      hideProgress(0);
+    } else {
+      showToast(`❌ Error: ${err.message}`);
+      logActivity(`[Download Error] ${err.message}`);
+      setProgress(0, `❌ ${err.message}`);
+      hideProgress(3000);
+    }
   } finally {
     isSingleDownloading = false;
     hideTrackProgress(track.id);
     if (btn) {
       btn.classList.remove('downloading');
-      btn.disabled = false;
+      btn.disabled = false; // always keep clickable so users can re-download
       if (!error && downloadedTrackIds.has(track.id)) {
         btn.classList.add('downloaded');
         btn.textContent = '✓ Downloaded';
-        btn.disabled = true;
       } else {
         btn.textContent = 'Download MP3';
       }

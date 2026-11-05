@@ -33,7 +33,15 @@ if (NAVIDROME_DIR && !fs.existsSync(NAVIDROME_DIR)) {
   try { fs.mkdirSync(NAVIDROME_DIR, { recursive: true }); } catch (e) {}
 }
 
-app.use(express.static(path.join(__dirname, 'public')));
+app.use(express.static(path.join(__dirname, 'public'), {
+  etag: false,
+  maxAge: 0,
+  lastModified: true,
+  setHeaders: (res) => {
+    // Never cache — ensures the browser always loads fresh code after edits
+    res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
+  }
+}));
 app.use(express.json());
 app.use(cors());
 
@@ -306,7 +314,81 @@ app.get('/api/metadata', async (req, res) => {
 });
 
 // ─────────────────────────────────────────────
+// Helper: Fallback download via spotdl
+// Used when yt-dlp produces no file (bot-detection / 429)
+// ─────────────────────────────────────────────
+function downloadWithSpotdl(trackInfo, targetDir, activeProcesses) {
+  return new Promise((resolve, reject) => {
+    const spotifyUrl = trackInfo.spotifyUrl || '';
+    if (!spotifyUrl) return reject(new Error('No Spotify URL for spotdl fallback'));
+
+    console.log(`[spotdl] Falling back for: ${trackInfo.title} — ${trackInfo.artist}`);
+
+    const args = [
+      'download',
+      spotifyUrl,
+      '--output', path.join(targetDir, '{artists} - {title}.{output-ext}'),
+      '--format', 'mp3',
+      '--bitrate', '320k',
+      '--overwrite', 'skip',
+      '--log-level', 'ERROR',
+    ];
+
+    const proc = spawn('spotdl', args);
+    if (activeProcesses) activeProcesses.push(proc);
+
+    let stderr = '';
+    let stdout = '';
+    let timedOut = false;
+    proc.stdout.on('data', d => { stdout += d.toString(); });
+    proc.stderr.on('data', d => { stderr += d.toString(); });
+
+    // Hard timeout so spotdl can't hang forever on bot-blocked tracks
+    const timer = setTimeout(() => {
+      timedOut = true;
+      try { proc.kill('SIGKILL'); } catch (_) {}
+    }, 90_000);
+
+    proc.on('close', (code, signal) => {
+      clearTimeout(timer);
+      if (activeProcesses) {
+        const idx = activeProcesses.indexOf(proc);
+        if (idx !== -1) activeProcesses.splice(idx, 1);
+      }
+      if (timedOut) return reject(new Error('spotdl timed out after 90s (likely YouTube bot-block)'));
+      if (signal) return reject(new Error(`spotdl killed by signal ${signal}`));
+      if (code !== 0) {
+        const errMsg = stderr.slice(-300).trim() || stdout.slice(-300).trim() || 'Unknown spotdl error';
+        return reject(new Error(`spotdl exited ${code}: ${errMsg}`));
+      }
+
+      // Find the MP3 spotdl wrote
+      try {
+        const mp3s = fs.readdirSync(targetDir).filter(f => f.toLowerCase().endsWith('.mp3'));
+        if (mp3s.length > 0) {
+          const title = (trackInfo.title || '').toLowerCase();
+          const best = mp3s.find(f => f.toLowerCase().includes(title)) || mp3s[0];
+          return resolve({ mp3Path: path.join(targetDir, best) });
+        }
+      } catch (_) {}
+
+      reject(new Error('spotdl produced no MP3 file'));
+    });
+
+    proc.on('error', err => {
+      clearTimeout(timer);
+      if (activeProcesses) {
+        const idx = activeProcesses.indexOf(proc);
+        if (idx !== -1) activeProcesses.splice(idx, 1);
+      }
+      reject(err);
+    });
+  });
+}
+
+// ─────────────────────────────────────────────
 // Helper: Download one track via yt-dlp + tag with node-id3
+// Falls back to spotdl if yt-dlp produces no file.
 // Returns: { mp3Path }
 // ─────────────────────────────────────────────
 function downloadTrackWithYtDlp(trackInfo, targetDir, activeProcesses, onProgress) {
@@ -329,13 +411,19 @@ function downloadTrackWithYtDlp(trackInfo, targetDir, activeProcesses, onProgres
     const outputTemplate = path.join(targetDir, `${baseName}.%(ext)s`);
     const finalMp3Path   = path.join(targetDir, `${baseName}.mp3`);
 
+    // Build yt-dlp args — use cookies.txt if present (fixes YouTube bot-detection)
+    const cookiesPath = path.join(__dirname, 'cookies.txt');
+    const hasCookies  = fs.existsSync(cookiesPath);
+
     const args = [
       '--extract-audio',
       '--audio-format', 'mp3',
       '--audio-quality', '0',
       '--no-playlist',
       '--no-warnings',
-      '--newline',        // one progress line per \n — easier to parse
+      '--newline',
+      '--socket-timeout', '30',
+      ...(hasCookies ? ['--cookies', cookiesPath] : ['--cookies-from-browser', 'chrome']),
       '-o', outputTemplate,
       searchQuery
     ];
@@ -374,55 +462,91 @@ function downloadTrackWithYtDlp(trackInfo, targetDir, activeProcesses, onProgres
 
       if (code !== 0) {
         const errMsg = stderr.slice(-300).trim() || stdout.slice(-300).trim() || 'Unknown error';
-        return reject(new Error(`yt-dlp exited ${code}: ${errMsg}`));
+        console.warn(`[yt-dlp] Exited ${code}: ${errMsg} — trying spotdl fallback`);
+        try {
+          const result = await downloadWithSpotdl(trackInfo, targetDir, activeProcesses);
+          return resolve({ mp3Path: result.mp3Path, usedSpotdl: true });
+        } catch (spotErr) {
+          console.warn(`[spotdl] Fallback also failed: ${spotErr.message}`);
+          return reject(new Error(`yt-dlp (${errMsg.split('\n')[0]}) and spotdl (${spotErr.message.split('\n')[0]}) both failed`));
+        }
       }
+
+      // Scan the target dir for the actual output file — yt-dlp may sanitize
+      // the filename differently from our baseName prediction.
+      let foundMp3 = null;
+      try {
+        const files = fs.readdirSync(targetDir);
+        // Prefer exact match, then any new MP3 in the dir
+        const mp3s = files.filter(f => f.toLowerCase().endsWith('.mp3'));
+        if (mp3s.length > 0) {
+          // Pick the one most similar to baseName, fallback to first
+          const exact = mp3s.find(f => f.toLowerCase().startsWith(cleanTitle.toLowerCase()));
+          foundMp3 = path.join(targetDir, exact || mp3s[0]);
+        }
+      } catch (_) {}
+
+      if (!foundMp3) {
+        console.warn(`[yt-dlp] No MP3 found in ${targetDir} — trying spotdl fallback`);
+        try {
+          const result = await downloadWithSpotdl(trackInfo, targetDir, activeProcesses);
+          return resolve({ mp3Path: result.mp3Path, usedSpotdl: true });
+        } catch (spotErr) {
+          console.warn(`[spotdl] Fallback also failed: ${spotErr.message}`);
+          return reject(new Error(`yt-dlp and spotdl both failed. yt-dlp: no file produced. spotdl: ${spotErr.message}`));
+        }
+      }
+
+      const finalMp3Path = foundMp3;
 
       // Tag the MP3 with Spotify metadata
       try {
-        if (fs.existsSync(finalMp3Path)) {
-          const tags = {
-            title,
-            artist,
-            album: album || title,
-          };
-          if (year)     tags.year    = year;
-          if (subtitle) tags.comment = { language: 'eng', text: subtitle };
+        const tags = {
+          title,
+          artist,
+          album: album || title,
+        };
+        if (year)     tags.year    = year;
+        if (subtitle) tags.comment = { language: 'eng', text: subtitle };
 
-          if (coverArt) {
-            try {
-              const imgRes = await fetch(coverArt);
-              if (imgRes.ok) {
-                const imgBuf = Buffer.from(await imgRes.arrayBuffer());
-                tags.image = {
-                  mime: 'image/jpeg',
-                  type: { id: 3, name: 'front cover' },
-                  description: 'Cover',
-                  imageBuffer: imgBuf
-                };
-              }
-            } catch (imgErr) {
-              console.warn(`[Solora] Cover fetch failed for "${title}":`, imgErr.message);
+        if (coverArt) {
+          try {
+            const imgRes = await fetch(coverArt);
+            if (imgRes.ok) {
+              const imgBuf = Buffer.from(await imgRes.arrayBuffer());
+              tags.image = {
+                mime: 'image/jpeg',
+                type: { id: 3, name: 'front cover' },
+                description: 'Cover',
+                imageBuffer: imgBuf
+              };
             }
+          } catch (imgErr) {
+            console.warn(`[Solora] Cover fetch failed for "${title}":`, imgErr.message);
           }
-
-          NodeID3.write(tags, finalMp3Path);
-          console.log(`[yt-dlp] ✓ Tagged: ${baseName}.mp3`);
-        } else {
-          console.warn(`[yt-dlp] MP3 not found after download: ${finalMp3Path}`);
         }
+
+        NodeID3.write(tags, finalMp3Path);
+        console.log(`[yt-dlp] ✓ Tagged: ${path.basename(finalMp3Path)}`);
       } catch (tagErr) {
         console.warn(`[Solora] Tagging error for "${title}":`, tagErr.message);
       }
 
-      resolve({ mp3Path: finalMp3Path });
+      resolve({ mp3Path: finalMp3Path, usedSpotdl: false });
     });
 
-    proc.on('error', err => {
+    proc.on('error', async (err) => {
       if (activeProcesses) {
         const idx = activeProcesses.indexOf(proc);
         if (idx !== -1) activeProcesses.splice(idx, 1);
       }
-      reject(err);
+      console.warn(`[yt-dlp] Spawn failed: ${err.message} — trying spotdl fallback`);
+      try {
+        const result = await downloadWithSpotdl(trackInfo, targetDir, activeProcesses);
+        return resolve({ mp3Path: result.mp3Path, usedSpotdl: true });
+      } catch (spotErr) {
+        reject(new Error(`yt-dlp spawn failed (${err.message}) and spotdl also failed (${spotErr.message})`));
+      }
     });
   });
 }
@@ -460,27 +584,35 @@ function setupSSE(res) {
 // GET /api/download-track-sse?title=...&artist=...
 // ─────────────────────────────────────────────
 app.get('/api/download-track-sse', (req, res) => {
-  const { title, artist, subtitle, album, year, coverArt } = req.query;
+  const { title, artist, subtitle, album, year, coverArt, spotifyUrl } = req.query;
   if (!title) return res.status(400).send('Title required');
 
   const { send, isClosed } = setupSSE(res);
   const jobTempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'solora-single-'));
+  const activeProcesses = [];
+
+  // Kill the download process if the client cancels
+  res.on('close', () => {
+    activeProcesses.forEach(p => { try { p.kill('SIGKILL'); } catch (_) {} });
+  });
 
   send('status', `Searching for "${title}" by ${artist || 'unknown'}...`);
   console.log(`[Solora] Individual download: ${title} - ${artist}`);
 
-  const trackInfo = { title, artist: artist || '', subtitle, album, year, coverArt };
+  const trackInfo = { title, artist: artist || '', subtitle, album, year, coverArt, spotifyUrl };
 
-  downloadTrackWithYtDlp(trackInfo, jobTempDir, null, (pct) => {
+  downloadTrackWithYtDlp(trackInfo, jobTempDir, activeProcesses, (pct) => {
     if (!isClosed()) send('progress', { pct: Math.round(pct * 0.85) }); // scale to 85% for tagging step
   })
-    .then(({ mp3Path }) => {
+    .then(({ mp3Path, usedSpotdl }) => {
       if (isClosed()) return;
+      if (usedSpotdl) send('fallback', { tool: 'spotdl', title });
       send('progress', { pct: 95 });
       send('status', 'Tagging complete. Preparing download...');
 
-      if (!fs.existsSync(mp3Path)) {
-        send('error', 'MP3 file not found after download.');
+      // Helper guarantees mp3Path exists on resolve — but guard anyway
+      if (!mp3Path || !fs.existsSync(mp3Path)) {
+        send('error', 'Download produced no file (yt-dlp + spotdl both failed). Check cookies.txt for YouTube bot-detection.');
         return res.end();
       }
 
@@ -506,17 +638,27 @@ app.get('/api/download-track-sse', (req, res) => {
 // (Blocking endpoint — browser triggers this after SSE confirms done)
 // ─────────────────────────────────────────────
 app.get('/api/download-track', (req, res) => {
-  const { title, artist, subtitle, album, year, coverArt } = req.query;
+  const { title, artist, subtitle, album, year, coverArt, spotifyUrl } = req.query;
   if (!title) return res.status(400).send('Track title is required.');
 
   const jobTempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'solora-job-'));
+  const activeProcesses = [];
   console.log(`[Solora] On-demand download: ${title} - ${artist || ''}`);
 
-  downloadTrackWithYtDlp({ title, artist: artist || '', subtitle, album, year, coverArt }, jobTempDir)
-    .then(({ mp3Path }) => {
-      if (!fs.existsSync(mp3Path)) throw new Error('No audio file produced.');
+  // Kill the download process if the client aborts the request
+  res.on('close', () => {
+    activeProcesses.forEach(p => { try { p.kill('SIGKILL'); } catch (_) {} });
+  });
+
+  downloadTrackWithYtDlp({ title, artist: artist || '', subtitle, album, year, coverArt, spotifyUrl }, jobTempDir, activeProcesses)
+    .then(({ mp3Path, usedSpotdl }) => {
+      // Helper guarantees mp3Path exists on resolve
+      if (!mp3Path || !fs.existsSync(mp3Path)) {
+        throw new Error('Download produced no file (yt-dlp + spotdl both failed). Check cookies.txt for YouTube bot-detection.');
+      }
 
       const fileName = path.basename(mp3Path);
+      if (usedSpotdl) res.setHeader('X-Solora-Fallback', 'spotdl');
       res.setHeader('Content-Disposition', `attachment; filename="${encodeURIComponent(fileName)}"`);
       res.setHeader('Content-Type', 'audio/mpeg');
 
@@ -553,6 +695,11 @@ app.post('/api/zip-start', async (req, res) => {
   const jobTempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'solora-zip-'));
   const activeProcesses = [];
 
+  // Kill any running yt-dlp/spotdl processes if the client cancels
+  res.on('close', () => {
+    activeProcesses.forEach(p => { try { p.kill('SIGKILL'); } catch (_) {} });
+  });
+
   send('status', `Starting download for ${tracks.length} track(s)...`);
   console.log(`[Zip] Job ${jobToken}: ${tracks.length} tracks`);
 
@@ -571,11 +718,14 @@ app.post('/api/zip-start', async (req, res) => {
         send('log', `Downloading: ${track.title} - ${track.artist || ''}`);
 
         try {
-          await downloadTrackWithYtDlp(track, jobTempDir, activeProcesses, (pct) => {
+          const result = await downloadTrackWithYtDlp(track, jobTempDir, activeProcesses, (pct) => {
             if (!isClosed()) {
               send('track_progress', { id: track.id, pct: Math.round(pct) });
             }
           });
+          if (result?.usedSpotdl && !isClosed()) {
+            send('fallback', { tool: 'spotdl', title: track.title });
+          }
           completedCount++;
           send('track_done', { id: track.id, title: track.title, completed: completedCount, total: tracks.length });
           send('log', `✓ Done: ${track.title} (${completedCount}/${tracks.length})`);
@@ -671,6 +821,11 @@ app.post('/api/send-to-navidrome', async (req, res) => {
   const { send, isClosed } = setupSSE(res);
   const activeProcesses = [];
 
+  // Kill any running yt-dlp/spotdl processes if the client cancels
+  res.on('close', () => {
+    activeProcesses.forEach(p => { try { p.kill('SIGKILL'); } catch (_) {} });
+  });
+
   send('status', `Sending ${tracks.length} track(s) to ${targetDir}...`);
   console.log(`[Navidrome] ${tracks.length} tracks → ${targetDir}`);
 
@@ -690,9 +845,12 @@ app.post('/api/send-to-navidrome', async (req, res) => {
       send('log', `Downloading: ${track.title} - ${track.artist || ''}`);
 
       try {
-        await downloadTrackWithYtDlp(track, targetDir, activeProcesses, (pct) => {
+        const result = await downloadTrackWithYtDlp(track, targetDir, activeProcesses, (pct) => {
           if (!isClosed()) send('track_progress', { id: track.id, pct: Math.round(pct) });
         });
+        if (result?.usedSpotdl && !isClosed()) {
+          send('fallback', { tool: 'spotdl', title: track.title });
+        }
         succeeded++;
         completedCount++;
         send('track_done', { id: track.id, title: track.title, completed: completedCount, total: tracks.length });

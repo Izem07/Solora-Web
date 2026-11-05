@@ -8,10 +8,10 @@ RUN npm ci --omit=dev
 # ── Stage 2: runtime ───────────────────────────────────────────────────────
 FROM node:20-alpine
 
-# Install yt-dlp + ffmpeg
+# Install yt-dlp + ffmpeg + spotdl
 RUN apk add --no-cache python3 py3-pip ffmpeg curl \
- && pip3 install --break-system-packages yt-dlp \
- && yt-dlp --version
+ && pip3 install --break-system-packages yt-dlp spotdl \
+ && yt-dlp --version && spotdl --version
 
 WORKDIR /app
 

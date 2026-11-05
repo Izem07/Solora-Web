@@ -4,4 +4,4 @@ downloads/*
 !downloads/.gitkeep
 temp_cache/*
 !temp_cache/.gitkeep
-
+cookies.txt

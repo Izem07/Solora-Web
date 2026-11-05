@@ -1,112 +1,122 @@
 # ☀️ Solora
 
-> Modern, lightweight Spotify inspection and downloading tool with direct browser downloads and seamless Navidrome integration.
+> Spotify playlist inspector and downloader with direct browser downloads and seamless Navidrome sync.
 
 ---
 
-## ⚡ Highlights
+## ⚡ Features
 
-- **Instant Metadata Extraction**: Inspects public Spotify playlists, albums, or individual tracks via embed endpoints with per-track 640x640 album art, artist, title, album, and release year.
-- **Custom Track Queuing**: Inspect an entire playlist and append individual tracks on the fly using the **+ Add** row.
-- **Real-Time Progress Streaming**: Powered by Server-Sent Events (SSE) that reflect actual `yt-dlp` download metrics—no simulated timers.
-- **High-Fidelity MP3 Tagging**: Embeds complete ID3v2 tags (title, artist, album, year, comment/subtitle, high-res front cover) directly into the MP3 using `node-id3`.
-- **🚀 Navidrome Direct Sync**: Send individual songs or batches directly into your user-specified Navidrome music library (local directory or network share like `\\server\Music`), with automatic library scan triggering via the Subsonic API.
-- **⚡ Batch ZIP Downloads**: Download any selection of tracks bundled into a single ZIP archive.
-- **Vivid Visual Status**:
-  - 🟢 **Green glow & border**: Downloaded to browser.
-  - 🔵 **Blue glow & border**: Synced to Navidrome.
-  - Live per-track mini progress indicators on active cards.
+- **Full Playlist Support** — inspects up to 900 tracks per playlist using Spotify's internal spclient API, bypassing the 100-track embed limit
+- **Instant Metadata** — per-track 640×640 album art, artist, album, release year via Spotify oEmbed (batches of 10)
+- **Real-Time SSE Progress** — live `yt-dlp` download metrics streamed to the browser, no polling
+- **High-Fidelity MP3 Tagging** — ID3v2 tags (title, artist, album, year, cover art) embedded via `node-id3`
+- **Batch ZIP Download** — select any tracks, download as a single `.zip`
+- **Navidrome Direct Sync** — download tagged MP3s straight to your music library folder; triggers an automatic library scan via the Subsonic API
+- **6× Parallel Downloads** — concurrent yt-dlp workers for both ZIP and Navidrome jobs
+- **Add Individual Tracks** — append any Spotify track URL to the current list on the fly
+- **Visual Status** — green glow = downloaded to browser, blue glow = synced to Navidrome
 
 ---
 
 ## 🛠️ Prerequisites
 
-1. **Node.js**: v18+ (v20+ recommended)
-2. **yt-dlp**: Must be installed and accessible in your system `PATH`.
-   - Windows (winget): `winget install yt-dlp`
-   - Linux / macOS: `brew install yt-dlp` or via package manager
-3. **ffmpeg**: Required by `yt-dlp` for audio extraction and MP3 conversion (`ffmpeg` must be in `PATH`).
+| Requirement | Version | Notes |
+|---|---|---|
+| Node.js | v18+ (v20 recommended) | |
+| yt-dlp | latest | must be in system `PATH` |
+| ffmpeg | any recent | required by yt-dlp for MP3 conversion, must be in `PATH` |
+
+Install yt-dlp:
+```bash
+# Windows
+winget install yt-dlp
+
+# macOS / Linux
+brew install yt-dlp
+```
 
 ---
 
 ## 🚀 Quick Start
 
-### 1. Clone & Install Dependencies
-
 ```bash
 git clone https://github.com/your-username/Solora-Web.git
 cd Solora-Web
 npm install
+node main.js        # or: npm start
 ```
 
-### 2. Environment Configuration (Optional)
+Open `http://localhost:3000` in your browser.
 
-Create or edit `.env` in the root folder:
+---
+
+## ⚙️ Environment Variables (`.env`)
+
+All variables are optional — everything can also be configured in the web UI.
 
 ```ini
-# Port to run the web server on
 PORT=3000
 
-# Optional default server-side Navidrome music directory
-# Note: You can also specify/override this dynamically in the Web UI
+# Server-side default music directory for Navidrome sync
+# Can be a local path or a UNC path (\\server\Music)
 NAVIDROME_DIR=
 
-# Navidrome Subsonic API credentials (triggers automatic scan after sync)
+# Navidrome server URL — triggers auto library scan after sync
 NAVIDROME_URL=http://localhost:4533
 NAVIDROME_USER=
 NAVIDROME_PASSWORD=
+
+# Token-based auth (optional alternative to password)
 NAVIDROME_TOKEN=
 NAVIDROME_SALT=
 ```
 
-### 3. Launch the Server
+---
 
-```bash
-npm start
-# or
-node main.js
-```
+## 📖 Usage
 
-Open your browser and navigate to:
-```text
-http://localhost:3000
-```
+### 1. Configure (one-time, saved to localStorage)
+
+Click **⚙ Settings** to expand the config panel:
+
+| Field | What to enter |
+|---|---|
+| Solora Backend | Leave blank if running locally. Enter `http://host:3000` if remote. |
+| Navidrome URL | e.g. `http://192.168.1.10:4533` — used to trigger library scans |
+| Music Directory | Path where MP3s are written, e.g. `\\192.168.1.10\Music` or `/music` |
+| Username / Password | Your Navidrome credentials. Click **Test** to verify. |
+
+### 2. Inspect a Playlist or Track
+
+Paste any public Spotify URL (track, album, or playlist) and click **Inspect**.
+
+- Playlists up to 900 tracks are fully loaded
+- Use **+ Add** to append individual track URLs to the current list
+
+### 3. Download or Sync
+
+- **Single track → browser**: click **Download MP3** on the card
+- **Single track → Navidrome**: click the **🚀** button on the card
+- **Batch → ZIP**: select tracks, click **⚡ Download ZIP** in the bottom bar
+- **Batch → Navidrome**: select tracks, click **🚀 Send to Navidrome** in the bottom bar
+
+Batch jobs run 6 tracks in parallel. Progress streams live via SSE.
 
 ---
 
-## 📖 Usage Guide
-
-### 1. Inspect Music
-- Paste any public Spotify playlist, album, or track URL into the main input field.
-- Click **Inspect** (or press Enter).
-- All tracks will load with individual album art, duration, and metadata.
-
-### 2. Add Individual Tracks to the Queue
-- After inspecting a playlist or album, an **Add Track** row will appear beneath the search bar.
-- Paste any single Spotify track URL (`https://open.spotify.com/track/...`) and click **+ Add** or press Enter.
-- The track will appear at the bottom of your active list with a flash highlight.
-
-### 3. Downloading Tracks
-
-- **Single Track (Browser)**: Click **Download MP3** on any track card.
-- **Single Track (Navidrome)**: Click the **🚀** rocket button on any track card to sync directly to your configured music folder.
-- **Batch Download (.zip)**: Select checkboxes for the desired tracks (or click **Select All**) and click **⚡ Download Selected (.zip)** on the floating bottom bar.
-- **Batch Navidrome Sync**: Select the tracks and click **🚀 Send to Navidrome** on the floating action bar. Tracks will download concurrently (3 at a time) directly to your library.
-
----
-
-## ⚙️ Architecture & Endpoints
+## 🔌 API Endpoints
 
 | Endpoint | Method | Description |
 |---|---|---|
-| `/api/metadata` | `GET` | Fetches track details, per-track cover art (upgraded to 640x640), and release years. |
-| `/api/download-track` | `GET` | On-demand single track download streamed directly to browser with automatic temp cleanup. |
-| `/api/zip-start` | `POST` | SSE endpoint managing concurrent `yt-dlp` downloads, emitting real-time progress events. |
-| `/api/zip-download/:token` | `GET` | Serves the assembled ZIP package after SSE job completion. |
-| `/api/send-to-navidrome` | `POST` | SSE endpoint downloading tagged individual MP3s directly into user's designated music directory. |
+| `/api/metadata` | GET | Full track list (up to 900) with cover art and release year |
+| `/api/download-track` | GET | Single track download, streamed to browser |
+| `/api/zip-start` | POST | SSE — concurrent downloads, emits per-track progress |
+| `/api/zip-download/:token` | GET | Serves assembled ZIP after SSE job completes |
+| `/api/send-to-navidrome` | POST | SSE — downloads tagged MP3s directly to music directory |
+| `/api/navidrome-test` | POST | Tests Navidrome credentials and connectivity |
 
 ---
 
 ## 📝 License
 
-MIT License. Designed and maintained for personal media archiving and self-hosted streaming setups.
+MIT — designed for personal media archiving and self-hosted streaming.

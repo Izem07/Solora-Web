@@ -2,6 +2,7 @@ const inspectBtn         = document.getElementById('inspectBtn');
 const urlInput           = document.getElementById('urlInput');
 const serverInput        = document.getElementById('serverUrl');
 const navidromeDirInput  = document.getElementById('navidromeDirInput');
+const navidromeUrlInput  = document.getElementById('navidromeUrlInput');
 const navidromeUserInput = document.getElementById('navidromeUserInput');
 const navidromePassInput = document.getElementById('navidromePassInput');
 const testNavidromeBtn   = document.getElementById('testNavidromeBtn');
@@ -26,6 +27,22 @@ const cancelBtn          = document.getElementById('cancelBtn');
 const addTrackRow        = document.getElementById('addTrackRow');
 const addTrackInput      = document.getElementById('addTrackInput');
 const addTrackBtn        = document.getElementById('addTrackBtn');
+const settingsToggle     = document.getElementById('settingsToggle');
+const settingsBody       = document.getElementById('settingsBody');
+
+// ─────────────────────────────────────────────────
+// Settings panel toggle
+// ─────────────────────────────────────────────────
+if (settingsToggle && settingsBody) {
+  // Auto-open if no Navidrome URL has been saved yet (first run)
+  const hasNavUrl = !!(localStorage.getItem('solora_navidrome_url') || '');
+  if (!hasNavUrl) settingsBody.classList.remove('hidden');
+
+  settingsToggle.addEventListener('click', () => {
+    const hidden = settingsBody.classList.toggle('hidden');
+    settingsToggle.classList.toggle('open', !hidden);
+  });
+}
 
 let currentTracks     = [];
 let currentSourceUrl  = '';
@@ -126,6 +143,14 @@ if (navidromeDirInput) {
   });
 }
 
+if (navidromeUrlInput) {
+  navidromeUrlInput.value = localStorage.getItem('solora_navidrome_url') || '';
+  navidromeUrlInput.addEventListener('change', () => {
+    const v = navidromeUrlInput.value.trim().replace(/\/+$/, '');
+    v ? localStorage.setItem('solora_navidrome_url', v) : localStorage.removeItem('solora_navidrome_url');
+  });
+}
+
 if (navidromeUserInput) {
   navidromeUserInput.value = localStorage.getItem('solora_navidrome_user') || '';
   navidromeUserInput.addEventListener('change', () => {
@@ -155,6 +180,7 @@ function setNavidromeStatus(type, message) {
 async function testNavidromeConnection(silent = false) {
   const user = navidromeUserInput?.value.trim() || '';
   const pass = navidromePassInput?.value || '';
+  const navidromeUrl = (navidromeUrlInput?.value.trim() || localStorage.getItem('solora_navidrome_url') || '').replace(/\/+$/, '');
 
   if (!user) {
     if (!silent) setNavidromeStatus('error', '⚠️ Enter a Navidrome username to test');
@@ -172,7 +198,7 @@ async function testNavidromeConnection(silent = false) {
     const res = await fetch(`${base}/api/navidrome-test`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ user, pass })
+      body: JSON.stringify({ user, pass, navidromeUrl })
     });
     const data = await res.json();
 
@@ -756,6 +782,7 @@ sendToNavidromeBtn.addEventListener('click', () => {
 
   const navUser    = navidromeUserInput?.value.trim() || '';
   const navPass    = navidromePassInput?.value || '';
+  const navUrl     = (navidromeUrlInput?.value.trim() || localStorage.getItem('solora_navidrome_url') || '').replace(/\/+$/, '');
 
   cancelStream = readSSEStream(
     fetch(`${base}/api/send-to-navidrome`, {
@@ -765,7 +792,8 @@ sendToNavidromeBtn.addEventListener('click', () => {
         tracks: selected, 
         destinationDir: targetDir,
         navidromeUser: navUser,
-        navidromePass: navPass
+        navidromePass: navPass,
+        navidromeUrl: navUrl
       })
     }),
     (msg) => {
@@ -858,6 +886,7 @@ function triggerSingleNavidrome(track, card, base) {
 
   const navUser = navidromeUserInput?.value.trim() || '';
   const navPass = navidromePassInput?.value || '';
+  const navUrl  = (navidromeUrlInput?.value.trim() || localStorage.getItem('solora_navidrome_url') || '').replace(/\/+$/, '');
 
   readSSEStream(
     fetch(`${base}/api/send-to-navidrome`, {
@@ -867,7 +896,8 @@ function triggerSingleNavidrome(track, card, base) {
         tracks: [track], 
         destinationDir: targetDir,
         navidromeUser: navUser,
-        navidromePass: navPass
+        navidromePass: navPass,
+        navidromeUrl: navUrl
       })
     }),
     (msg) => {

@@ -644,10 +644,10 @@ app.get('/api/zip-download/:token', async (req, res) => {
 
 // ─────────────────────────────────────────────
 // 5. Send to Navidrome — SSE progress stream
-// POST /api/send-to-navidrome  body: { tracks, destinationDir, navidromeUser, navidromePass }
+// POST /api/send-to-navidrome  body: { tracks, destinationDir, navidromeUser, navidromePass, navidromeUrl }
 // ─────────────────────────────────────────────
 app.post('/api/send-to-navidrome', async (req, res) => {
-  const { tracks, destinationDir, navidromeUser, navidromePass } = req.body;
+  const { tracks, destinationDir, navidromeUser, navidromePass, navidromeUrl } = req.body;
   if (!tracks || !Array.isArray(tracks) || tracks.length === 0) {
     return res.status(400).send('No tracks provided.');
   }
@@ -705,12 +705,13 @@ app.post('/api/send-to-navidrome', async (req, res) => {
 
   // Trigger Navidrome library scan if credentials provided via UI or .env
   let scanTriggered = false;
-  const user = (navidromeUser || NAVIDROME_USER || '').trim();
-  const pass = (navidromePass !== undefined && navidromePass !== null && navidromePass !== '') ? navidromePass : NAVIDROME_PASSWORD;
+  const user    = (navidromeUser || NAVIDROME_USER || '').trim();
+  const pass    = (navidromePass !== undefined && navidromePass !== null && navidromePass !== '') ? navidromePass : NAVIDROME_PASSWORD;
+  const baseUrl = (navidromeUrl  || NAVIDROME_URL  || '').replace(/\/+$/, '');
 
-  if (NAVIDROME_URL && user) {
+  if (baseUrl && user) {
     try {
-      let scanUrl = `${NAVIDROME_URL}/rest/startScan?v=1.16.1&c=Solora&f=json`;
+      let scanUrl = `${baseUrl}/rest/startScan?v=1.16.1&c=Solora&f=json`;
       if (NAVIDROME_TOKEN && NAVIDROME_SALT) {
         scanUrl += `&u=${encodeURIComponent(user)}&t=${encodeURIComponent(NAVIDROME_TOKEN)}&s=${encodeURIComponent(NAVIDROME_SALT)}`;
       } else if (pass) {

@@ -28,9 +28,27 @@
         <input 
           type="text" 
           id="navidromeDirInput" 
-          placeholder="Navidrome Music Directory (e.g. D:\Music or /music)" 
+          placeholder="Navidrome Music Directory (e.g. \\100.68.222.8\Music or /music)" 
           style="margin-top: 6px;"
         />
+        <div class="nav-auth-row">
+          <input 
+            type="text" 
+            id="navidromeUserInput" 
+            placeholder="Navidrome Username" 
+            autocomplete="off"
+          />
+          <input 
+            type="password" 
+            id="navidromePassInput" 
+            placeholder="Navidrome Password" 
+            autocomplete="off"
+          />
+          <button type="button" id="testNavidromeBtn" class="btn-test-nav" title="Test Navidrome Credentials">
+            Test
+          </button>
+        </div>
+        <div id="navidromeStatus" class="navidrome-status hidden"></div>
       </div>
 
       <section class="search-box">

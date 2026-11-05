@@ -37,6 +37,136 @@ app.use(express.static(path.join(__dirname, 'public')));
 app.use(express.json());
 app.use(cors());
 
+// Test Navidrome credentials & server connectivity
+app.post('/api/navidrome-test', async (req, res) => {
+  const { navidromeUrl, user, pass } = req.body;
+  const baseUrl = (navidromeUrl || NAVIDROME_URL || '').replace(/\/+$/, '');
+  const username = (user || NAVIDROME_USER || '').trim();
+  const password = pass !== undefined && pass !== null ? pass : NAVIDROME_PASSWORD;
+
+  if (!baseUrl) {
+    return res.status(400).json({ success: false, message: 'Navidrome URL is not configured on the server.' });
+  }
+  if (!username) {
+    return res.status(400).json({ success: false, message: 'Please enter a Navidrome username.' });
+  }
+
+  try {
+    let pingUrl = `${baseUrl}/rest/ping?v=1.16.1&c=Solora&f=json&u=${encodeURIComponent(username)}`;
+    if (password) {
+      pingUrl += `&p=${encodeURIComponent(password)}`;
+    }
+
+    const response = await fetch(pingUrl, { signal: AbortSignal.timeout(5000) });
+    const data = await response.json().catch(() => null);
+
+    if (data?.['subsonic-response']?.status === 'ok') {
+      const serverVersion = data['subsonic-response']?.serverVersion || '';
+      return res.json({ 
+        success: true, 
+        message: `Connected successfully! (Navidrome ${serverVersion})` 
+      });
+    } else {
+      const err = data?.['subsonic-response']?.error?.message || 'Invalid username or password';
+      return res.status(401).json({ success: false, message: err });
+    }
+  } catch (err) {
+    return res.status(500).json({ success: false, message: `Could not reach Navidrome: ${err.message}` });
+  }
+});
+
+// ─────────────────────────────────────────────
+// Helper: Fetch per-track metadata (cover art, year, album) via oEmbed + embed page
+// Operates in parallel batches; fills trackImageMap and trackYearMap in-place.
+// ─────────────────────────────────────────────
+async function fetchTrackMetaBatch(trackIds, trackImageMap, trackYearMap, collectionCoverArt) {
+  const BATCH_SIZE = 10;
+  for (let i = 0; i < trackIds.length; i += BATCH_SIZE) {
+    const batch = trackIds.slice(i, i + BATCH_SIZE);
+    await Promise.all(batch.map(async (trackId) => {
+      try {
+        // oEmbed → thumbnail (fast, no auth needed)
+        const oembedRes = await fetch(
+          `https://open.spotify.com/oembed?url=https://open.spotify.com/track/${trackId}`,
+          { signal: AbortSignal.timeout(8000) }
+        );
+        if (oembedRes.ok) {
+          const oembedData = await oembedRes.json();
+          if (oembedData.thumbnail_url) {
+            const hdCover = oembedData.thumbnail_url.replace(/ab67616d0000(1e02|4851)/, 'ab67616d0000b273');
+            trackImageMap.set(trackId, hdCover);
+          }
+        }
+
+        // Embed page → release year + album name
+        const trackEmbedRes = await fetch(`https://open.spotify.com/embed/track/${trackId}`, {
+          headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120.0.0.0 Safari/537.36' },
+          signal: AbortSignal.timeout(8000)
+        });
+        if (trackEmbedRes.ok) {
+          const trackHtml = await trackEmbedRes.text();
+          const trackScript = trackHtml.match(/<script id="__NEXT_DATA__" type="application\/json">([\s\S]*?)<\/script>/);
+          if (trackScript) {
+            const trackData = JSON.parse(trackScript[1]);
+            const trackEntity = trackData.props?.pageProps?.state?.data?.entity;
+            const releaseDate = trackEntity?.releaseDate?.isoString || '';
+            if (releaseDate) trackYearMap.set(trackId, releaseDate.substring(0, 4));
+            if (trackEntity?.album?.name) {
+              trackImageMap.set(`album:${trackId}`, trackEntity.album.name);
+            }
+          }
+        }
+      } catch (_) { /* silent fallback per track */ }
+    }));
+  }
+}
+
+// ─────────────────────────────────────────────
+// Helper: Use Spotify's spclient API to get ALL track URIs for a playlist.
+// Requires the anonymous access token embedded in the Spotify embed page HTML.
+// Returns an array of track objects: { uri, title, artist, durationMs }
+// ─────────────────────────────────────────────
+async function fetchAllPlaylistTracksViaSpclient(playlistId, accessToken) {
+  const MAX_TRACKS = 900;
+  const url = `https://spclient.wg.spotify.com/playlist/v2/playlist/${playlistId}`;
+  const response = await fetch(url, {
+    headers: {
+      'Authorization': `Bearer ${accessToken}`,
+      'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120.0.0.0 Safari/537.36',
+      'Accept': 'application/json',
+      'app-platform': 'WebPlayer',
+      'spotify-app-version': '1.0.0'
+    },
+    signal: AbortSignal.timeout(15000)
+  });
+
+  if (!response.ok) {
+    throw new Error(`spclient returned ${response.status}`);
+  }
+
+  const data = await response.json();
+
+  // spclient returns { contents: { items: [{ uri, attributes: { ... } }, ...] } }
+  const items = data?.contents?.items || [];
+  const tracks = [];
+
+  for (const item of items) {
+    if (tracks.length >= MAX_TRACKS) break;
+    const uri = item?.uri || '';
+    if (!uri.startsWith('spotify:track:')) continue; // skip local files, episodes, etc.
+
+    const attrs = item?.attributes || {};
+    tracks.push({
+      uri,
+      title: attrs.name || '',
+      artist: attrs.artistNames?.join(', ') || '',
+      durationMs: attrs.duration || 0,
+    });
+  }
+
+  return tracks;
+}
+
 // ─────────────────────────────────────────────
 // 1. Spotify Metadata Endpoint
 // ─────────────────────────────────────────────
@@ -66,6 +196,17 @@ app.get('/api/metadata', async (req, res) => {
     const entity = parsed.props?.pageProps?.state?.data?.entity;
     if (!entity) return res.status(404).json({ error: 'No entity found in Spotify response.' });
 
+    // Anonymous access token — try multiple locations Spotify has used across versions
+    const accessToken = parsed.props?.pageProps?.accessToken
+      || parsed.props?.pageProps?.state?.accessToken
+      || parsed.props?.pageProps?.nonce
+      || (() => {
+           // Regex fallback: "accessToken":"BQC5na..."
+           const m = html.match(/"accessToken"\s*:\s*"([^"]{50,})"/);
+           return m ? m[1] : '';
+         })()
+      || '';
+
     // Collection-level cover art
     let coverArt = '';
     if (entity.visualIdentity?.image?.length) {
@@ -75,68 +216,55 @@ app.get('/api/metadata', async (req, res) => {
     }
 
     const collectionTitle = entity.title || entity.name || 'Untitled';
+    const embedTrackList  = Array.isArray(entity.trackList) ? entity.trackList : [];
 
-    // Fetch per-track cover art + release year via oEmbed (batches of 5)
-    const trackImageMap = new Map();
-    const trackYearMap = new Map();
-
-    if (entity.trackList && Array.isArray(entity.trackList)) {
-      const validTrackIds = entity.trackList
-        .map(t => (t.uri || '').replace('spotify:track:', ''))
-        .filter(Boolean);
-
-      const BATCH_SIZE = 5;
-      for (let i = 0; i < validTrackIds.length; i += BATCH_SIZE) {
-        const batch = validTrackIds.slice(i, i + BATCH_SIZE);
-        await Promise.all(batch.map(async (trackId) => {
-          try {
-            // oEmbed gives thumbnail + we can get full embed JSON for year
-            const oembedRes = await fetch(`https://open.spotify.com/oembed?url=https://open.spotify.com/track/${trackId}`);
-            if (oembedRes.ok) {
-              const oembedData = await oembedRes.json();
-              if (oembedData.thumbnail_url) {
-                // Upgrade 300px → 640px resolution
-                const hdCover = oembedData.thumbnail_url.replace(/ab67616d0000(1e02|4851)/, 'ab67616d0000b273');
-                trackImageMap.set(trackId, hdCover);
-              }
-            }
-
-            // Fetch track embed for release year
-            const trackEmbedRes = await fetch(`https://open.spotify.com/embed/track/${trackId}`, {
-              headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120.0.0.0 Safari/537.36' }
-            });
-            if (trackEmbedRes.ok) {
-              const trackHtml = await trackEmbedRes.text();
-              const trackScript = trackHtml.match(/<script id="__NEXT_DATA__" type="application\/json">([\s\S]*?)<\/script>/);
-              if (trackScript) {
-                const trackData = JSON.parse(trackScript[1]);
-                const trackEntity = trackData.props?.pageProps?.state?.data?.entity;
-                const releaseDate = trackEntity?.releaseDate?.isoString || '';
-                if (releaseDate) trackYearMap.set(trackId, releaseDate.substring(0, 4));
-                // Also grab album name if not already set
-                if (trackEntity?.album?.name) {
-                  trackImageMap.set(`album:${trackId}`, trackEntity.album.name);
-                }
-              }
-            }
-          } catch (e) {
-            // Silent fallback
-          }
-        }));
+    // ── For playlists: try spclient to get full track list (up to 900) ──
+    let rawTrackList = embedTrackList; // fallback to embed's 100
+    if (type === 'playlist' && accessToken) {
+      try {
+        console.log(`[Solora] Fetching full playlist via spclient (token: ${accessToken.substring(0, 20)}...)`);
+        const spTracks = await fetchAllPlaylistTracksViaSpclient(id, accessToken);
+        if (spTracks.length > embedTrackList.length) {
+          console.log(`[Solora] spclient returned ${spTracks.length} tracks (embed had ${embedTrackList.length})`);
+          // Convert spclient format → embed-style objects so the rest of the code is unchanged
+          rawTrackList = spTracks.map(sp => ({
+            uri: sp.uri,
+            title: sp.title,
+            subtitle: sp.artist,
+            duration: sp.durationMs,
+            audioPreview: null,
+          }));
+        } else {
+          console.log(`[Solora] spclient returned ${spTracks.length} tracks — using embed list`);
+        }
+      } catch (spErr) {
+        console.warn('[Solora] spclient fallback failed, using embed list:', spErr.message);
       }
     }
 
+    // ── Fetch per-track metadata (cover art, year, album name) via oEmbed ──
+    const trackImageMap = new Map();
+    const trackYearMap  = new Map();
+
+    if (rawTrackList.length > 0) {
+      const validTrackIds = rawTrackList
+        .map(t => (t.uri || '').replace('spotify:track:', ''))
+        .filter(Boolean);
+      await fetchTrackMetaBatch(validTrackIds, trackImageMap, trackYearMap, coverArt);
+    }
+
+    // ── Build final track array ──
     let tracks = [];
-    if (entity.trackList && Array.isArray(entity.trackList)) {
-      tracks = entity.trackList.map((t, idx) => {
+    if (rawTrackList.length > 0) {
+      tracks = rawTrackList.map((t, idx) => {
         const trackUri = t.uri || '';
-        const trackId = trackUri.replace('spotify:track:', '');
+        const trackId  = trackUri.replace('spotify:track:', '');
         const trackCover = trackImageMap.get(trackId) || coverArt;
-        const trackYear = trackYearMap.get(trackId) || '';
+        const trackYear  = trackYearMap.get(trackId)  || '';
         const trackAlbum = trackImageMap.get(`album:${trackId}`) || (type === 'album' ? collectionTitle : '');
         return {
           id: trackId || `track-${idx}`,
-          title: t.title || 'Unknown Title',
+          title:  t.title    || 'Unknown Title',
           artist: t.subtitle || entity.subtitle || 'Unknown Artist',
           subtitle: t.subtitle || '',
           album: trackAlbum,
@@ -152,7 +280,7 @@ app.get('/api/metadata', async (req, res) => {
       const releaseYear = entity.releaseDate?.isoString ? entity.releaseDate.isoString.substring(0, 4) : '';
       tracks = [{
         id,
-        title: entity.title || entity.name || 'Unknown Title',
+        title:  entity.title || entity.name || 'Unknown Title',
         artist: entity.subtitle || entity.artists?.map(a => a.name).join(', ') || 'Unknown Artist',
         subtitle: entity.subtitle || '',
         album: entity.album?.name || '',
@@ -424,7 +552,7 @@ app.post('/api/zip-start', async (req, res) => {
 
   try {
     const queue = [...tracks];
-    const CONCURRENCY = 3;
+    const CONCURRENCY = 6;
     let completedCount = 0;
 
     const worker = async () => {
@@ -495,7 +623,7 @@ app.get('/api/zip-download/:token', async (req, res) => {
   zipJobs.delete(req.params.token);
 
   res.attachment('Solora_Music_Bundle.zip');
-  const archive = archiver('zip', { zlib: { level: 6 } });
+  const archive = archiver('zip', { zlib: { level: 1 } });
   archive.on('error', err => {
     console.error('[Zip] Archive error:', err);
     if (!res.headersSent) res.status(500).send(err.message);
@@ -516,10 +644,10 @@ app.get('/api/zip-download/:token', async (req, res) => {
 
 // ─────────────────────────────────────────────
 // 5. Send to Navidrome — SSE progress stream
-// POST /api/send-to-navidrome  body: { tracks, destinationDir }
+// POST /api/send-to-navidrome  body: { tracks, destinationDir, navidromeUser, navidromePass }
 // ─────────────────────────────────────────────
 app.post('/api/send-to-navidrome', async (req, res) => {
-  const { tracks, destinationDir } = req.body;
+  const { tracks, destinationDir, navidromeUser, navidromePass } = req.body;
   if (!tracks || !Array.isArray(tracks) || tracks.length === 0) {
     return res.status(400).send('No tracks provided.');
   }
@@ -541,7 +669,7 @@ app.post('/api/send-to-navidrome', async (req, res) => {
   console.log(`[Navidrome] ${tracks.length} tracks → ${targetDir}`);
 
   const queue = [...tracks];
-  const CONCURRENCY = 3;
+  const CONCURRENCY = 6;
   let succeeded = 0;
   let failed = 0;
   let completedCount = 0;
@@ -575,20 +703,35 @@ app.post('/api/send-to-navidrome', async (req, res) => {
   const workers = Array.from({ length: Math.min(CONCURRENCY, tracks.length) }, () => worker());
   await Promise.all(workers);
 
-  // Trigger Navidrome library scan if credentials configured
+  // Trigger Navidrome library scan if credentials provided via UI or .env
   let scanTriggered = false;
-  if (NAVIDROME_URL && NAVIDROME_USER) {
+  const user = (navidromeUser || NAVIDROME_USER || '').trim();
+  const pass = (navidromePass !== undefined && navidromePass !== null && navidromePass !== '') ? navidromePass : NAVIDROME_PASSWORD;
+
+  if (NAVIDROME_URL && user) {
     try {
       let scanUrl = `${NAVIDROME_URL}/rest/startScan?v=1.16.1&c=Solora&f=json`;
       if (NAVIDROME_TOKEN && NAVIDROME_SALT) {
-        scanUrl += `&u=${encodeURIComponent(NAVIDROME_USER)}&t=${encodeURIComponent(NAVIDROME_TOKEN)}&s=${encodeURIComponent(NAVIDROME_SALT)}`;
-      } else if (NAVIDROME_PASSWORD) {
-        scanUrl += `&u=${encodeURIComponent(NAVIDROME_USER)}&p=${encodeURIComponent(NAVIDROME_PASSWORD)}`;
+        scanUrl += `&u=${encodeURIComponent(user)}&t=${encodeURIComponent(NAVIDROME_TOKEN)}&s=${encodeURIComponent(NAVIDROME_SALT)}`;
+      } else if (pass) {
+        scanUrl += `&u=${encodeURIComponent(user)}&p=${encodeURIComponent(pass)}`;
+      } else {
+        scanUrl += `&u=${encodeURIComponent(user)}`;
       }
+
+      console.log(`[Navidrome] Requesting library scan at ${scanUrl.replace(/p=[^&]+/, 'p=***')}`);
       const scanRes = await fetch(scanUrl, { signal: AbortSignal.timeout(6000) });
-      if (scanRes.ok) scanTriggered = true;
+      const scanData = await scanRes.json().catch(() => null);
+      if (scanRes.ok && scanData?.['subsonic-response']?.status === 'ok') {
+        scanTriggered = true;
+        send('log', '✓ Navidrome library scan started successfully');
+      } else {
+        const errorMsg = scanData?.['subsonic-response']?.error?.message || `HTTP ${scanRes.status}`;
+        send('log', `⚠ Navidrome scan notice: ${errorMsg}`);
+      }
     } catch (e) {
       console.warn('[Navidrome] Scan trigger failed:', e.message);
+      send('log', `⚠ Navidrome scan trigger error: ${e.message}`);
     }
   }
 

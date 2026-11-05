@@ -2,6 +2,10 @@ const inspectBtn         = document.getElementById('inspectBtn');
 const urlInput           = document.getElementById('urlInput');
 const serverInput        = document.getElementById('serverUrl');
 const navidromeDirInput  = document.getElementById('navidromeDirInput');
+const navidromeUserInput = document.getElementById('navidromeUserInput');
+const navidromePassInput = document.getElementById('navidromePassInput');
+const testNavidromeBtn   = document.getElementById('testNavidromeBtn');
+const navidromeStatus    = document.getElementById('navidromeStatus');
 const trackList          = document.getElementById('trackList');
 const collectionHeader   = document.getElementById('collectionHeader');
 const selectionToolbar   = document.getElementById('selectionToolbar');
@@ -120,6 +124,83 @@ if (navidromeDirInput) {
     const v = navidromeDirInput.value.trim();
     v ? localStorage.setItem('solora_navidrome_dir', v) : localStorage.removeItem('solora_navidrome_dir');
   });
+}
+
+if (navidromeUserInput) {
+  navidromeUserInput.value = localStorage.getItem('solora_navidrome_user') || '';
+  navidromeUserInput.addEventListener('change', () => {
+    const v = navidromeUserInput.value.trim();
+    v ? localStorage.setItem('solora_navidrome_user', v) : localStorage.removeItem('solora_navidrome_user');
+  });
+}
+
+if (navidromePassInput) {
+  navidromePassInput.value = localStorage.getItem('solora_navidrome_pass') || '';
+  navidromePassInput.addEventListener('change', () => {
+    const v = navidromePassInput.value;
+    v ? localStorage.setItem('solora_navidrome_pass', v) : localStorage.removeItem('solora_navidrome_pass');
+  });
+}
+
+// ─────────────────────────────────────────────────
+// Navidrome Test & Status Feedback
+// ─────────────────────────────────────────────────
+function setNavidromeStatus(type, message) {
+  if (!navidromeStatus) return;
+  navidromeStatus.className = `navidrome-status ${type}`;
+  navidromeStatus.textContent = message;
+  navidromeStatus.classList.remove('hidden');
+}
+
+async function testNavidromeConnection(silent = false) {
+  const user = navidromeUserInput?.value.trim() || '';
+  const pass = navidromePassInput?.value || '';
+
+  if (!user) {
+    if (!silent) setNavidromeStatus('error', '⚠️ Enter a Navidrome username to test');
+    return false;
+  }
+
+  const base = getBaseUrl() || '';
+  if (testNavidromeBtn) {
+    testNavidromeBtn.disabled = true;
+    testNavidromeBtn.textContent = '...';
+  }
+  setNavidromeStatus('checking', 'Checking Navidrome credentials...');
+
+  try {
+    const res = await fetch(`${base}/api/navidrome-test`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ user, pass })
+    });
+    const data = await res.json();
+
+    if (res.ok && data.success) {
+      setNavidromeStatus('success', `✓ ${data.message}`);
+      return true;
+    } else {
+      setNavidromeStatus('error', `❌ ${data.message || 'Authentication failed'}`);
+      return false;
+    }
+  } catch (err) {
+    setNavidromeStatus('error', `❌ Cannot reach server: ${err.message}`);
+    return false;
+  } finally {
+    if (testNavidromeBtn) {
+      testNavidromeBtn.disabled = false;
+      testNavidromeBtn.textContent = 'Test';
+    }
+  }
+}
+
+if (testNavidromeBtn) {
+  testNavidromeBtn.addEventListener('click', () => testNavidromeConnection(false));
+}
+
+// Check on initial load if credentials already saved
+if (navidromeUserInput?.value.trim()) {
+  testNavidromeConnection(true);
 }
 
 function getBaseUrl() {
@@ -673,11 +754,19 @@ sendToNavidromeBtn.addEventListener('click', () => {
     selected.forEach(t => hideTrackProgress(t.id));
   };
 
+  const navUser    = navidromeUserInput?.value.trim() || '';
+  const navPass    = navidromePassInput?.value || '';
+
   cancelStream = readSSEStream(
     fetch(`${base}/api/send-to-navidrome`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ tracks: selected, destinationDir: targetDir })
+      body: JSON.stringify({ 
+        tracks: selected, 
+        destinationDir: targetDir,
+        navidromeUser: navUser,
+        navidromePass: navPass
+      })
     }),
     (msg) => {
       if (done) return;
@@ -767,11 +856,19 @@ function triggerSingleNavidrome(track, card, base) {
 
   let done = false;
 
+  const navUser = navidromeUserInput?.value.trim() || '';
+  const navPass = navidromePassInput?.value || '';
+
   readSSEStream(
     fetch(`${base}/api/send-to-navidrome`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ tracks: [track], destinationDir: targetDir })
+      body: JSON.stringify({ 
+        tracks: [track], 
+        destinationDir: targetDir,
+        navidromeUser: navUser,
+        navidromePass: navPass
+      })
     }),
     (msg) => {
       if (done) return;

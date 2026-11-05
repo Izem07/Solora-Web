@@ -1,0 +1,101 @@
+name: solora
+
+services:
+  solora:
+    build:
+      context: https://github.com/Izem07/Solora-Web.git#main
+    image: solora:latest
+    container_name: solora
+    restart: unless-stopped
+
+    ports:
+      - "3080:3000"
+
+    environment:
+      PORT: 3000
+      NAVIDROME_DIR: /music
+      NAVIDROME_URL: ""
+      NAVIDROME_USER: ""
+      NAVIDROME_PASSWORD: ""
+      NAVIDROME_TOKEN: ""
+      NAVIDROME_SALT: ""
+
+    volumes:
+      - type: bind
+        source: /DATA/AppData/solora/music
+        target: /music
+
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
+    networks:
+      - solora_bridge
+
+    x-casaos:
+      envs:
+        - container: PORT
+          description:
+            en_US: Port the web server listens on inside the container
+        - container: NAVIDROME_DIR
+          description:
+            en_US: Path inside the container where MP3s are saved (matches the volume target)
+        - container: NAVIDROME_URL
+          description:
+            en_US: "Navidrome server URL for auto-scan (e.g. http://192.168.1.10:4533). Can also be set in the web UI."
+        - container: NAVIDROME_USER
+          description:
+            en_US: Navidrome username. Can also be set in the web UI.
+        - container: NAVIDROME_PASSWORD
+          description:
+            en_US: Navidrome password. Can also be set in the web UI.
+        - container: NAVIDROME_TOKEN
+          description:
+            en_US: Navidrome token (optional — alternative to password auth)
+        - container: NAVIDROME_SALT
+          description:
+            en_US: Navidrome salt (optional — used with token auth)
+
+      ports:
+        - container: "3000"
+          description:
+            en_US: Solora web UI port
+
+      volumes:
+        - container: /music
+          description:
+            en_US: Music directory — where downloaded MP3s are written. Point this to your Navidrome library folder.
+
+networks:
+  solora_bridge:
+    driver: bridge
+
+x-casaos:
+  architectures:
+    - amd64
+    - arm64
+  main: solora
+  author: lionp
+  category: Media
+  description:
+    en_US: |
+      Solora is a self-hosted Spotify playlist inspector and downloader.
+      Paste any public Spotify track, album, or playlist URL (up to 900 tracks) and
+      download high-quality tagged MP3s directly to your browser or sync them straight
+      into your Navidrome music library with a single click.
+
+      Features:
+      - Full playlist support — up to 900 tracks via Spotify's internal API
+      - 6× parallel downloads powered by yt-dlp + ffmpeg
+      - ID3v2 tags (title, artist, album, year, 640×640 cover art)
+      - Batch ZIP download or direct Navidrome sync
+      - Real-time SSE progress streaming
+      - Automatic Navidrome library scan after sync
+  tagline:
+    en_US: Spotify downloader & Navidrome sync tool
+  title:
+    en_US: Solora
+  icon: https://raw.githubusercontent.com/Izem07/Solora-Web/main/public/solora-icon.jpg
+  index: /
+  port_map: "3080"
+  scheme: http
+  store_app_id: solora

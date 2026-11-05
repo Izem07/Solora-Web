@@ -1,42 +1,32 @@
-name: Deploy Solora Web Interface
+name: Validate & Notify
 
 on:
   push:
     branches:
-      - main # Triggers workflow on pushes to the main branch
-  workflow_dispatch: # Allows manual trigger from the GitHub Actions tab
-
-# Sets permissions of the GITHUB_TOKEN to allow deployment to GitHub Pages
-permissions:
-  contents: read
-  pages: write
-  id-token: write
-
-# Allow only one concurrent deployment, skipping runs queued between the run in-progress and latest queued.
-concurrency:
-  group: 'pages'
-  cancel-in-progress: false
+      - main
+  workflow_dispatch:
 
 jobs:
-  deploy:
-    environment:
-      name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
+  validate:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout repository
+      - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Setup GitHub Pages
-        uses: actions/configure-pages@v5
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
         with:
-          enablement: true
+          node-version: '20'
 
-      - name: Upload static artifact (public directory)
-        uses: actions/upload-pages-artifact@v3
-        with:
-          path: 'public/'
+      - name: Install dependencies
+        run: npm ci
 
-      - name: Deploy to GitHub Pages
-        id: deployment
-        uses: actions/deploy-pages@v4
+      - name: Syntax check
+        run: node --check main.js && echo "✓ main.js syntax OK"
+
+      - name: Confirm deploy source
+        run: |
+          echo "✓ Push to main detected."
+          echo "CasaOS will build from: https://github.com/Izem07/Solora-Web.git#main"
+          echo "To update your running container, run on CasaOS:"
+          echo "  docker compose down && docker compose up -d --build"

@@ -423,7 +423,7 @@ function downloadTrackWithYtDlp(trackInfo, targetDir, activeProcesses, onProgres
       '--no-warnings',
       '--newline',
       '--socket-timeout', '30',
-      ...(hasCookies ? ['--cookies', cookiesPath] : ['--cookies-from-browser', 'chrome']),
+      ...(hasCookies ? ['--cookies', cookiesPath] : []),
       '-o', outputTemplate,
       searchQuery
     ];

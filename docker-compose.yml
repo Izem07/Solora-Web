@@ -2,46 +2,14 @@ name: solora
 
 services:
   solora:
-    image: izem07/solora:latest
+    build: .
     container_name: solora
     restart: unless-stopped
-
     ports:
       - "3080:3000"
-
     environment:
       PORT: 3000
-      # Container-internal path — always /music, the volume handles the rest
       NAVIDROME_DIR: /music
-      NAVIDROME_URL: ""
-      NAVIDROME_USER: ""
-      NAVIDROME_PASSWORD: ""
-      NAVIDROME_TOKEN: ""
-      NAVIDROME_SALT: ""
-
+      NAVIDROME_URL: "http://100.68.222.8:4533"
     volumes:
-      # Mounts the Navidrome SMB share directly into the container.
-      # Set MUSIC_USER / MUSIC_PASS in a .env file next to this compose,
-      # or replace them with your actual credentials.
-      - navidrome_music:/music
-      # YouTube cookies for bot-detection bypass — export from your browser
-      # and place cookies.txt next to this compose file on the CasaOS host.
-      - ./cookies.txt:/app/cookies.txt:ro
-
-    extra_hosts:
-      - "host.docker.internal:host-gateway"
-
-    networks:
-      - solora_bridge
-
-networks:
-  solora_bridge:
-    driver: bridge
-
-volumes:
-  navidrome_music:
-    driver: local
-    driver_opts:
-      type: cifs
-      o: "username=${MUSIC_USER},password=${MUSIC_PASS},vers=3.0,uid=1000,gid=1000"
-      device: "//100.68.222.8/Music"
+      - /DATA/Media/Music:/music

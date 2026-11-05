@@ -955,7 +955,6 @@ function triggerSingleNavidrome(track, card, base) {
         markTrackSentToNav(track.id);
         showToast(`🚀 "${track.title}" sent to Navidrome!`);
         logActivity(`[Navidrome] ✓ Sent: ${track.title}`);
-        done = true;
       } else if (msg.type === 'track_fail') {
         hideTrackProgress(track.id);
         setProgress(0, `❌ Failed: ${track.title}`);

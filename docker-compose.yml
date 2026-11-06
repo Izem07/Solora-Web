@@ -2,7 +2,7 @@ name: solora
 
 services:
   solora:
-    build: .
+    image: izem07/solora:latest
     container_name: solora
     restart: unless-stopped
     ports:

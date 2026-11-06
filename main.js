@@ -901,6 +901,7 @@ app.post('/api/send-to-navidrome', async (req, res) => {
   }
 
   send('done', { succeeded, failed, total: tracks.length, scanTriggered, targetDir });
+  await new Promise(r => setTimeout(r, 100));
   res.end();
 });
 

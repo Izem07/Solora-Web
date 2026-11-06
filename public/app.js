@@ -279,20 +279,22 @@ function readSSEStream(fetchPromise, onMessage, onError) {
     let buffer = '';
 
     const pump = ({ done, value }) => {
-      if (cancelled || done) return;
-      buffer += decoder.decode(value, { stream: true });
+      if (cancelled) return;
+      if (value) {
+        buffer += decoder.decode(value, { stream: !done });
 
-      const parts = buffer.split('\n\n');
-      buffer = parts.pop();
+        const parts = buffer.split('\n\n');
+        buffer = parts.pop();
 
-      for (const part of parts) {
-        const line = part.replace(/^data: /, '').trim();
-        if (!line || line.startsWith(':')) continue; // skip keepalives
-        try {
-          onMessage(JSON.parse(line));
-        } catch (_) {}
+        for (const part of parts) {
+          const line = part.replace(/^data: /, '').trim();
+          if (!line || line.startsWith(':')) continue; // skip keepalives
+          try {
+            onMessage(JSON.parse(line));
+          } catch (_) {}
+        }
       }
-
+      if (done) return;
       reader.read().then(pump).catch(err => { if (!cancelled) onError(err); });
     };
 

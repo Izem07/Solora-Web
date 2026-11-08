@@ -90,6 +90,38 @@ app.post('/api/navidrome-test', async (req, res) => {
 });
 
 // ─────────────────────────────────────────────
+// Helper: Upgrade Spotify cover art to maximum available resolution (720p / 1600p Ultra HD)
+// ─────────────────────────────────────────────
+function upgradeSpotifyCoverUrl(url) {
+  if (!url || typeof url !== 'string') return '';
+  // Upgrade tracks/albums to Ultra HD (1600x1600: 82c1)
+  if (url.includes('ab67616d0000')) {
+    return url.replace(/ab67616d0000(1e02|4851|b273)/, 'ab67616d000082c1');
+  }
+  // Upgrade artist/single headers to Ultra HD (1600x1600: 82c1)
+  if (url.includes('ab6761610000')) {
+    return url.replace(/ab6761610000(1e02|4851|b273)/, 'ab676161000082c1');
+  }
+  // Upgrade podcast/episode covers to max quality (640x640: ba8a)
+  if (url.includes('ab6765630000')) {
+    return url.replace(/ab6765630000(5f1f|f68d)/, 'ab6765630000ba8a');
+  }
+  return url;
+}
+
+function pickHighestResolutionImage(sources) {
+  if (!sources || !Array.isArray(sources) || sources.length === 0) return '';
+  // Sort descending by resolution dimensions
+  const sorted = [...sources].sort((a, b) => {
+    const dimA = (a.maxWidth || a.maxHeight || a.width || a.height || 0);
+    const dimB = (b.maxWidth || b.maxHeight || b.width || b.height || 0);
+    return dimB - dimA;
+  });
+  const bestUrl = sorted[0]?.url || sources[0]?.url || '';
+  return upgradeSpotifyCoverUrl(bestUrl);
+}
+
+// ─────────────────────────────────────────────
 // Helper: Fetch per-track metadata (cover art, year, album) via oEmbed + embed page
 // Operates in parallel batches; fills trackImageMap and trackYearMap in-place.
 // ─────────────────────────────────────────────
@@ -107,7 +139,7 @@ async function fetchTrackMetaBatch(trackIds, trackImageMap, trackYearMap, collec
         if (oembedRes.ok) {
           const oembedData = await oembedRes.json();
           if (oembedData.thumbnail_url) {
-            const hdCover = oembedData.thumbnail_url.replace(/ab67616d0000(1e02|4851)/, 'ab67616d0000b273');
+            const hdCover = upgradeSpotifyCoverUrl(oembedData.thumbnail_url);
             trackImageMap.set(trackId, hdCover);
           }
         }
@@ -221,12 +253,10 @@ app.get('/api/metadata', async (req, res) => {
          })()
       || '';
 
-    // Collection-level cover art
-    let coverArt = '';
-    if (entity.visualIdentity?.image?.length) {
-      coverArt = entity.visualIdentity.image[entity.visualIdentity.image.length - 1]?.url || '';
-    } else if (entity.coverArt?.sources?.length) {
-      coverArt = entity.coverArt.sources[0]?.url || '';
+    // Collection-level cover art — pick highest resolution image and upgrade to HD
+    let coverArt = pickHighestResolutionImage(entity.visualIdentity?.image || entity.coverArt?.sources);
+    if (!coverArt && entity.images?.length) {
+      coverArt = pickHighestResolutionImage(entity.images);
     }
 
     const collectionTitle = entity.title || entity.name || 'Untitled';
@@ -624,7 +654,8 @@ function downloadTrackWithYtDlp(trackInfo, targetDir, activeProcesses, onProgres
 
         if (coverArt) {
           try {
-            const imgRes = await fetch(coverArt);
+            const hdCoverArt = upgradeSpotifyCoverUrl(coverArt);
+            const imgRes = await fetch(hdCoverArt);
             if (imgRes.ok) {
               const imgBuf = Buffer.from(await imgRes.arrayBuffer());
               tags.image = {

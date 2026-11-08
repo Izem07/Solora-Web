@@ -511,7 +511,7 @@ function downloadTrackWithYtDlp(trackInfo, targetDir, activeProcesses, onProgres
     // Detect podcast episodes by spotifyUrl or explicit flag
     const isEpisode = !!(trackInfo.isEpisode || (trackInfo.spotifyUrl || '').includes('/episode/'));
     const searchQuery = isEpisode
-      ? `ytsearch1:${cleanTitle} ${cleanArtist} podcast`
+      ? `ytsearch1:${cleanTitle} ${cleanArtist}`
       : `ytsearch1:${cleanTitle} ${cleanArtist} audio`;
 
     // Use native path separators — yt-dlp handles them fine on Windows
@@ -569,6 +569,9 @@ function downloadTrackWithYtDlp(trackInfo, targetDir, activeProcesses, onProgres
 
       if (code !== 0) {
         const errMsg = stderr.slice(-300).trim() || stdout.slice(-300).trim() || 'Unknown error';
+        if (isEpisode) {
+          return reject(new Error(`yt-dlp failed: ${errMsg.split('\n')[0]}`));
+        }
         console.warn(`[yt-dlp] Exited ${code}: ${errMsg} — trying spotdl fallback`);
         try {
           const result = await downloadWithSpotdl(trackInfo, targetDir, activeProcesses);
@@ -594,6 +597,9 @@ function downloadTrackWithYtDlp(trackInfo, targetDir, activeProcesses, onProgres
       } catch (_) {}
 
       if (!foundMp3) {
+        if (isEpisode) {
+          return reject(new Error('yt-dlp produced no audio file for episode'));
+        }
         console.warn(`[yt-dlp] No MP3 found in ${targetDir} — trying spotdl fallback`);
         try {
           const result = await downloadWithSpotdl(trackInfo, targetDir, activeProcesses);

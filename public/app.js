@@ -155,9 +155,18 @@ if (serverInput) {
 }
 
 if (navidromeDirInput) {
-  navidromeDirInput.value = localStorage.getItem('solora_navidrome_dir') || '';
+  let savedDir = localStorage.getItem('solora_navidrome_dir') || '';
+  if (savedDir.startsWith('\\\\')) {
+    savedDir = '/music';
+    localStorage.setItem('solora_navidrome_dir', '/music');
+  }
+  navidromeDirInput.value = savedDir;
   navidromeDirInput.addEventListener('change', () => {
-    const v = navidromeDirInput.value.trim();
+    let v = navidromeDirInput.value.trim();
+    if (v.startsWith('\\\\')) {
+      v = '/music';
+      navidromeDirInput.value = '/music';
+    }
     v ? localStorage.setItem('solora_navidrome_dir', v) : localStorage.removeItem('solora_navidrome_dir');
   });
 }
@@ -799,7 +808,12 @@ sendToNavidromeBtn.addEventListener('click', () => {
   if (!selected.length) return;
 
   const base       = getBaseUrl();
-  const targetDir  = navidromeDirInput?.value.trim() || '';
+  let targetDir = navidromeDirInput?.value.trim() || '';
+  if (targetDir.startsWith('\\\\')) {
+    targetDir = '/music';
+    if (navidromeDirInput) navidromeDirInput.value = '/music';
+    localStorage.setItem('solora_navidrome_dir', '/music');
+  }
 
   sendToNavidromeBtn.disabled  = true;
   sendToNavidromeBtn.textContent = 'Syncing...';
@@ -917,7 +931,12 @@ function triggerSingleNavidrome(track, card, base) {
   const navBtn = card.querySelector('.btn-send-nav');
   if (navBtn?.disabled) return;
 
-  const targetDir = navidromeDirInput?.value.trim() || '';
+  let targetDir = navidromeDirInput?.value.trim() || '';
+  if (targetDir.startsWith('\\\\')) {
+    targetDir = '/music';
+    if (navidromeDirInput) navidromeDirInput.value = '/music';
+    localStorage.setItem('solora_navidrome_dir', '/music');
+  }
   if (!targetDir) {
     showToast('⚠️ Set your Navidrome Music Directory in the settings first.');
     navidromeDirInput?.focus();

@@ -921,7 +921,16 @@ app.post('/api/send-to-navidrome', async (req, res) => {
     return res.status(400).send('No tracks provided.');
   }
 
-  const targetDir = destinationDir ? path.resolve(destinationDir) : NAVIDROME_DIR;
+  // If on Linux/Docker and client sends a Windows UNC path (e.g. \\100.68.222.8\Music) or drive letter, fall back to NAVIDROME_DIR
+  let targetDir = NAVIDROME_DIR;
+  if (destinationDir) {
+    const isWindowsPath = /^[a-zA-Z]:|^\\\\/.test(destinationDir.trim());
+    if (process.platform !== 'win32' && isWindowsPath && NAVIDROME_DIR) {
+      targetDir = NAVIDROME_DIR;
+    } else {
+      targetDir = path.resolve(destinationDir);
+    }
+  }
   if (!targetDir) {
     return res.status(400).send('Please set your Navidrome Music Directory in the settings.');
   }

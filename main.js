@@ -191,7 +191,7 @@ app.get('/api/metadata', async (req, res) => {
   }
 
   try {
-    const match = url.match(/spotify\.com\/(track|album|playlist)\/([a-zA-Z0-9]+)/);
+    const match = url.match(/spotify\.com\/(track|album|playlist|episode|show)\/([a-zA-Z0-9]+)/);
     if (!match) return res.status(400).json({ error: 'Could not parse Spotify entity ID from URL.' });
 
     const [, type, id] = match;
@@ -231,6 +231,81 @@ app.get('/api/metadata', async (req, res) => {
 
     const collectionTitle = entity.title || entity.name || 'Untitled';
     const embedTrackList  = Array.isArray(entity.trackList) ? entity.trackList : [];
+
+    // ── Episode: single podcast episode ──
+    if (type === 'episode') {
+      const releaseYear = entity.releaseDate?.isoString?.substring(0, 4) || '';
+      const rawShowName = entity.podcastV2?.data?.name || entity.show?.name || entity.subtitle || '';
+      const isPunctuation = s => /^[\s._\-–—•·*#~]+$/.test(s.trim());
+      const cleanShow = (rawShowName && !isPunctuation(rawShowName)) ? rawShowName.trim() : '';
+      const rawTitle = entity.title || entity.name || 'Unknown Episode';
+
+      // Parse "Title - Artist" (or "Song - Sub - Artist")
+      const dashMatch = rawTitle.match(/^(.*)\s*[-–—]\s*([^–—\-]+)$/);
+      let title = rawTitle;
+      let artist = cleanShow || 'Unknown Artist';
+
+      if (dashMatch) {
+        title = dashMatch[1].trim();
+        artist = dashMatch[2].trim();
+      }
+
+      // Avoid showing junk like "." or duplicate artist as album
+      const album = (cleanShow && cleanShow !== artist) ? cleanShow : '';
+
+      const episodeTrack = {
+        id,
+        title,
+        artist,
+        subtitle:   artist,
+        album,
+        year:       releaseYear,
+        durationMs: entity.duration || 0,
+        previewUrl: entity.audioPreview?.url || null,
+        spotifyUrl: `https://open.spotify.com/episode/${id}`,
+        coverArt,
+        isEpisode:  true
+      };
+      return res.json({ 
+        type, 
+        id, 
+        title: episodeTrack.title, 
+        subtitle: artist, 
+        coverArt, 
+        totalTracks: 1, 
+        tracks: [episodeTrack] 
+      });
+    }
+
+    // ── Show: podcast show (list of recent episodes) ──
+    if (type === 'show') {
+      const isPunctuation = s => /^[\s._\-–—•·*#~]+$/.test(s.trim());
+      const cleanShow = (collectionTitle && !isPunctuation(collectionTitle)) ? collectionTitle.trim() : '';
+      const episodes = embedTrackList.map((ep, idx) => {
+        const epUri = ep.uri || '';
+        const epId  = epUri.replace('spotify:episode:', '');
+        const epTitle = ep.title || 'Unknown Episode';
+        const dashMatch = epTitle.match(/^(.*)\s*[-–—]\s*([^–—\-]+)$/);
+        const title = dashMatch ? dashMatch[1].trim() : epTitle;
+        const artist = dashMatch ? dashMatch[2].trim() : (cleanShow || 'Unknown Show');
+        const album = (cleanShow && cleanShow !== artist) ? cleanShow : '';
+
+        return {
+          id:         epId || `ep-${idx}`,
+          title,
+          artist,
+          subtitle:   artist,
+          album,
+          year:       '',
+          durationMs: ep.duration || 0,
+          previewUrl: ep.audioPreview?.url || null,
+          spotifyUrl: epId ? `https://open.spotify.com/episode/${epId}` : '',
+          coverArt,
+          isEpisode:  true
+        };
+      });
+      return res.json({ type, id, title: collectionTitle, subtitle: cleanShow || '', coverArt, totalTracks: episodes.length, tracks: episodes });
+    }
 
     // ── For playlists: try spclient to get full track list (up to 900) ──
     let rawTrackList = embedTrackList; // fallback to embed's 100
@@ -292,12 +367,32 @@ app.get('/api/metadata', async (req, res) => {
     } else {
       // Single track
       const releaseYear = entity.releaseDate?.isoString ? entity.releaseDate.isoString.substring(0, 4) : '';
+      const isPunctuation = s => /^[\s._\-–—•·*#~]+$/.test(s.trim());
+      const rawTitle = entity.title || entity.name || 'Unknown Title';
+      let title = rawTitle;
+      let rawArtist = entity.subtitle || entity.artists?.map(a => a.name).join(', ') || '';
+      let artist = (rawArtist && !isPunctuation(rawArtist)) ? rawArtist.trim() : '';
+
+      // If artist was punctuation/empty and title has " - ", extract artist from title
+      if (!artist || artist === 'Unknown Artist') {
+        const dashMatch = rawTitle.match(/^(.*)\s*[-–—]\s*([^–—\-]+)$/);
+        if (dashMatch) {
+          title = dashMatch[1].trim();
+          artist = dashMatch[2].trim();
+        } else {
+          artist = 'Unknown Artist';
+        }
+      }
+
+      const rawAlbum = entity.album?.name || '';
+      const album = (rawAlbum && !isPunctuation(rawAlbum)) ? rawAlbum.trim() : '';
+
       tracks = [{
         id,
-        title:  entity.title || entity.name || 'Unknown Title',
-        artist: entity.subtitle || entity.artists?.map(a => a.name).join(', ') || 'Unknown Artist',
-        subtitle: entity.subtitle || '',
-        album: entity.album?.name || '',
+        title,
+        artist,
+        subtitle: artist,
+        album,
         year: releaseYear,
         durationMs: entity.duration || 0,
         previewUrl: entity.audioPreview?.url || null,
@@ -327,7 +422,7 @@ function downloadWithSpotdl(trackInfo, targetDir, activeProcesses) {
     const args = [
       'download',
       spotifyUrl,
-      '--output', path.join(targetDir, '{artists} - {title}.{output-ext}'),
+      '--output', path.join(targetDir, '{title}.{output-ext}'),
       '--format', 'mp3',
       '--bitrate', '320k',
       '--overwrite', 'skip',
@@ -402,10 +497,22 @@ function downloadTrackWithYtDlp(trackInfo, targetDir, activeProcesses, onProgres
 
     // Sanitize for Windows filenames
     const sanitize = s => s.replace(/[\/\\?%*:|"<>]/g, '').trim();
-    const cleanTitle  = sanitize(title);
+    let cleanTitle  = sanitize(title) || 'Unknown Title';
     const cleanArtist = sanitize(artist);
-    const baseName    = `${cleanTitle} - ${cleanArtist}`;
-    const searchQuery = `ytsearch1:${cleanTitle} ${cleanArtist} audio`;
+
+    // Remove trailing artist if present in the title (e.g. "Song - Artist" or "Song -Artist")
+    if (cleanArtist) {
+      const artistPattern = new RegExp(`\\s*-\\s*${cleanArtist.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, 'i');
+      cleanTitle = cleanTitle.replace(artistPattern, '').trim() || cleanTitle;
+    }
+
+    const baseName    = cleanTitle;
+
+    // Detect podcast episodes by spotifyUrl or explicit flag
+    const isEpisode = !!(trackInfo.isEpisode || (trackInfo.spotifyUrl || '').includes('/episode/'));
+    const searchQuery = isEpisode
+      ? `ytsearch1:${cleanTitle} ${cleanArtist} podcast`
+      : `ytsearch1:${cleanTitle} ${cleanArtist} audio`;
 
     // Use native path separators — yt-dlp handles them fine on Windows
     const outputTemplate = path.join(targetDir, `${baseName}.%(ext)s`);

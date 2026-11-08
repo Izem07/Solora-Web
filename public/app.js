@@ -461,8 +461,12 @@ function appendTrackCard(track, base) {
   card.className = `track-card${isDownloaded ? ' downloaded' : ''}${isSentToNav ? ' nav-sent' : ''}`;
   card.id = `card-${track.id}`;
 
+  const isJunkText = s => !s || /^[\s._\-–—•·*#~]+$/.test(s.trim());
+  const cleanAlbum = isJunkText(track.album) ? '' : track.album.trim();
+  const cleanArtist = isJunkText(track.artist) ? '' : track.artist.trim();
+
   const metaParts = [];
-  if (track.album) metaParts.push(track.album);
+  if (cleanAlbum) metaParts.push(cleanAlbum);
   if (track.year)  metaParts.push(track.year);
   const metaLine = metaParts.join(' · ');
 
@@ -474,7 +478,7 @@ function appendTrackCard(track, base) {
       ${track.coverArt ? `<img src="${escapeHtml(track.coverArt)}" class="track-thumb" alt="Art">` : '<div class="track-thumb-placeholder"></div>'}
       <div class="track-details">
         <div class="track-title" title="${escapeHtml(track.title)}">${escapeHtml(track.title)}</div>
-        <div class="track-artist" title="${escapeHtml(track.artist)}">${escapeHtml(track.artist)}</div>
+        ${cleanArtist ? `<div class="track-artist" title="${escapeHtml(cleanArtist)}">${escapeHtml(cleanArtist)}</div>` : ''}
         ${metaLine ? `<div class="track-meta">${escapeHtml(metaLine)}</div>` : ''}
       </div>
     </div>
@@ -558,8 +562,12 @@ function renderMetadata(data, base) {
     card.className = `track-card${isDownloaded ? ' downloaded' : ''}${isSentToNav ? ' nav-sent' : ''}`;
     card.id = `card-${track.id}`;
 
+    const isJunkText = s => !s || /^[\s._\-–—•·*#~]+$/.test(s.trim());
+    const cleanAlbum = isJunkText(track.album) ? '' : track.album.trim();
+    const cleanArtist = isJunkText(track.artist) ? '' : track.artist.trim();
+
     const metaParts = [];
-    if (track.album) metaParts.push(track.album);
+    if (cleanAlbum) metaParts.push(cleanAlbum);
     if (track.year)  metaParts.push(track.year);
     const metaLine = metaParts.join(' · ');
 
@@ -571,7 +579,7 @@ function renderMetadata(data, base) {
         ${track.coverArt ? `<img src="${escapeHtml(track.coverArt)}" class="track-thumb" alt="Art">` : '<div class="track-thumb-placeholder"></div>'}
         <div class="track-details">
           <div class="track-title" title="${escapeHtml(track.title)}">${escapeHtml(track.title)}</div>
-          <div class="track-artist" title="${escapeHtml(track.artist)}">${escapeHtml(track.artist)}</div>
+          ${cleanArtist ? `<div class="track-artist" title="${escapeHtml(cleanArtist)}">${escapeHtml(cleanArtist)}</div>` : ''}
           ${metaLine ? `<div class="track-meta">${escapeHtml(metaLine)}</div>` : ''}
         </div>
       </div>
@@ -1068,14 +1076,22 @@ async function triggerOnDemandDownload(track, card, base) {
       }
     }
 
-    setProgress(95, `Saving ${track.title}.mp3...`);
+    const sanitize = s => s.replace(/[\/\\?%*:|"<>]/g, '').trim();
+    let safeTitle = sanitize(track.title || 'track');
+    const safeArtist = sanitize(track.artist || '');
+    if (safeArtist) {
+      const artistPattern = new RegExp(`\\s*-\\s*${safeArtist.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, 'i');
+      safeTitle = safeTitle.replace(artistPattern, '').trim() || safeTitle;
+    }
+
+    setProgress(95, `Saving ${safeTitle}.mp3...`);
     setTrackProgress(track.id, 100);
 
     const blob = new Blob(chunks, { type: 'audio/mpeg' });
     const objectUrl = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = objectUrl;
-    a.download = `${track.title} - ${track.artist || 'Artist'}.mp3`;
+    a.download = `${safeTitle}.mp3`;
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);
